@@ -1,0 +1,30 @@
+# Kalshi Tracker Configuration
+# Override any value with environment variables: KALSHI_<KEY_UPPERCASE>
+
+# ── Scanner ──────────────────────────────────────────────────────
+price_threshold: 85                # Primary filter: markets with yes_bid or no_bid >= this (cents)
+deep_scan_threshold: 70            # Deep scan: relaxed threshold for daily scan
+spread_max: 3                      # Max bid-ask spread on high-confidence side (cents)
+min_volume: 50                     # Minimum volume (secondary signal)
+price_change_threshold: 3          # Cents — meaningful change vs cache to re-trigger classification
+
+# ── Opportunity Manager ─────────────────────────────────────────
+min_edge_after_fees: 0.03          # Minimum edge after fees to send notification (3%)
+max_bankroll_pct: 0.05             # Max 5% of bankroll per opportunity
+default_bankroll: 1000.0           # Default bankroll in dollars
+fee_rate: 0.015                    # Average Kalshi fee rate (quadratic model, ~1.5%)
+notify_ttl_hours: 168              # Don't re-notify same market+side within 7 days
+
+# ── Backtest ────────────────────────────────────────────────────
+backtest_sample_size: 50           # Minimum markets to evaluate
+backtest_min_precision: 0.95       # Minimum acceptable precision for CERTAIN
+
+# ── Paths ───────────────────────────────────────────────────────
+cache_dir: ~/.hermes/kalshi-tracker/cache
+log_dir: ~/.hermes/kalshi-tracker/logs
+backtest_dir: ~/.hermes/kalshi-tracker/backtests
+cache_file: ~/.hermes/kalshi-tracker/cache/market_cache.json
+candidates_file: ~/.hermes/kalshi-tracker/cache/candidates.json
+classified_file: ~/.hermes/kalshi-tracker/cache/classified.json
+dashboard_log: ~/.hermes/kalshi-tracker/logs/opportunities.jsonl
+notified_cache: ~/.hermes/kalshi-tracker/cache/notified.json
