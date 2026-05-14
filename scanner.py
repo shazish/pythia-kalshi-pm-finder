@@ -16,7 +16,7 @@ DEFAULT_CONFIG = {
     "spread_max": 3,                # max bid-ask spread in cents
     "min_volume": 50,               # minimum volume as secondary signal
     "price_change_threshold": 3,    # cents — meaningful change vs cache
-    "max_pages": 50,                # max event pages per scan (5,000 events)
+    "max_pages": 20,                # max event pages per scan (2,000 events)
     "cache_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/market_cache.json"),
     "candidates_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/candidates.json"),
     # Categories where "obvious outcome" markets exist
