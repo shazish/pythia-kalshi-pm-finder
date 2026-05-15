@@ -132,6 +132,7 @@ def finalize():
             cm["classification"] = validate_classification(cm["classification"])
 
     from opportunity_manager import OpportunityManager
+    from excel_reporter import export_excel
     mgr = OpportunityManager()
     to_notify, to_log = mgr.process(classified)
 
@@ -145,6 +146,12 @@ def finalize():
             print("\n" + mgr.format_notification(opp))
     else:
         print("[kalshi_cron] No opportunities above threshold.")
+
+    # Export to Excel (falls back to CSV if openpyxl not installed)
+    timestamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M")
+    excel_path = os.path.join(SKILL_DIR, "logs", f"kalshi_{timestamp}.xlsx")
+    result_path = export_excel(to_notify, to_log, excel_path)
+    print(f"\n[kalshi_cron] Report saved: {result_path}")
 
 
 if __name__ == "__main__":
