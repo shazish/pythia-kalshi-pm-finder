@@ -22,6 +22,8 @@ DEFAULT_CONFIG = {
     "candidates_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/candidates.json"),
     # Categories where "obvious outcome" markets exist
     "scan_categories": ["Politics", "Economics", "Entertainment", "Weather", "World", "Elections"],
+    # Volume anomaly: flag when implied $ on the opposite (longshot) side exceeds this
+    "volume_anomaly_threshold": 5000,
 }
 
 
@@ -234,6 +236,42 @@ class ScannerAgent:
             return False
 
         return True
+
+    def _detect_volume_anomaly(self, market, high_confidence_side):
+        """
+        Flag markets where the opposite (longshot) side has significant implied capital.
+
+        Metric: volume × opposite_price / 100 ≈ rough dollars deployed on the losing side.
+        A large number means someone is betting heavily against the high-confidence outcome —
+        either informed trading or a hedge. Either way, the classifier must investigate.
+
+        Returns a dict if anomalous, else None.
+        """
+        volume = float(market.get("volume") or 0)
+        if volume < 500:
+            return None
+
+        if high_confidence_side == "YES":
+            opp_price = float(market.get("no_bid") or 0)
+            opp_side = "NO"
+        else:
+            opp_price = float(market.get("yes_bid") or 0)
+            opp_side = "YES"
+
+        if opp_price < 5:
+            return None
+
+        implied_longshot_dollars = volume * opp_price / 100
+        threshold = self.config.get("volume_anomaly_threshold", 5000)
+
+        if implied_longshot_dollars >= threshold:
+            return {
+                "opposite_side": opp_side,
+                "opposite_price": int(opp_price),
+                "implied_longshot_dollars": int(implied_longshot_dollars),
+                "total_volume": int(volume),
+            }
+        return None
 
     def _high_confidence_side(self, market):
         """Return 'YES' or 'NO' based on which side has higher bid."""
@@ -464,6 +502,7 @@ class ScannerAgent:
             "rules_primary": market.get("rules_primary", "") or event.get("rules_primary", ""),
             "high_confidence_side": side,
             "implied_probability": self._implied_prob(market, side),
+            "volume_anomaly": self._detect_volume_anomaly(market, side),
             "scan_type": scan_type,
             "scanned_at": datetime.now(timezone.utc).isoformat(),
         }

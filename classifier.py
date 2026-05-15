@@ -62,6 +62,30 @@ def build_classifier_prompt(candidate):
     rules = candidate.get("rules_primary", "").strip()
     rules_section = f"\nSETTLEMENT RULES: {rules}" if rules else ""
 
+    anomaly = candidate.get("volume_anomaly")
+    if anomaly:
+        opp_side = anomaly["opposite_side"]
+        opp_price = anomaly["opposite_price"]
+        implied_dollars = anomaly["implied_longshot_dollars"]
+        total_vol = anomaly["total_volume"]
+        anomaly_section = (
+            f"\n\n*** VOLUME ANOMALY DETECTED ***\n"
+            f"The {opp_side} side is priced at {opp_price}c (the longshot), yet the total "
+            f"volume of {total_vol:,} contracts implies approximately ${implied_dollars:,} "
+            f"deployed against the high-confidence side.\n"
+            f"This is a MANDATORY investigation point. Before classifying, you must:\n"
+            f"  1. Search specifically for why someone might bet {opp_side} on this market.\n"
+            f"  2. If you find any credible reason (recent news, legal risk, settlement ambiguity,\n"
+            f"     insider signal), it MUST appear in contradicting_signals.\n"
+            f"  3. Unexplained large bets against the obvious outcome are themselves a contradicting\n"
+            f"     signal — if you cannot explain the volume, add it as: "
+            f"{{\"fact\": \"Anomalous ${implied_dollars:,} implied on {opp_side} side ({total_vol:,} contracts) "
+            f"with no clear rationale found\", \"source_url\": \"\"}}.\n"
+            f"*** END ANOMALY WARNING ***"
+        )
+    else:
+        anomaly_section = ""
+
     prompt = f"""Classify this Kalshi market:
 
 TITLE: {candidate.get('title', 'N/A')}
@@ -77,7 +101,7 @@ VOLUME: {candidate.get('volume', 'N/A')}
 OPEN INTEREST: {candidate.get('open_interest', 'N/A')}
 CLOSE DATE: {candidate.get('close_date', 'N/A')}
 
-SETTLEMENT SOURCE: {candidate.get('settlement_source_url', 'N/A')}{rules_section}
+SETTLEMENT SOURCE: {candidate.get('settlement_source_url', 'N/A')}{rules_section}{anomaly_section}
 
 Instructions:
 1. Perform at least 3 web searches before classifying.

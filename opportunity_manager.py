@@ -232,6 +232,26 @@ class OpportunityManager:
         if settlement_risk:
             lines.append(f"Settlement risk: {settlement_risk}")
 
+        # Volume anomaly — surface before contradicting signals
+        anomaly = c.get("volume_anomaly")
+        if anomaly:
+            lines.append(
+                f"[!] Volume anomaly: {anomaly['opposite_side']} side at {anomaly['opposite_price']}c "
+                f"has ~${anomaly['implied_longshot_dollars']:,} implied against the high-confidence outcome "
+                f"({anomaly['total_volume']:,} total contracts)"
+            )
+
+        # Contradicting signals — always shown, even if empty (makes absence explicit)
+        contra = cl.get("contradicting_signals", [])
+        if contra:
+            lines.append("Contradicting signals:")
+            for s in contra:
+                fact = s.get("fact", "")
+                url = s.get("source_url", "")
+                lines.append(f"  - {fact}" + (f" [{url}]" if url else ""))
+        else:
+            lines.append("Contradicting signals: none found")
+
         lines.append(f"What could change: {cl.get('what_would_change_this', 'N/A')}")
         return "\n".join(lines)
 
