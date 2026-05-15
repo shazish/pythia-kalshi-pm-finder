@@ -170,11 +170,12 @@ class KalshiClient:
 
     def get_markets(self, limit=100, status=None, event_ticker=None,
                     series_ticker=None, min_close_ts=None,
-                    updated_since=None, tickers=None, cursor=None,
+                    max_close_ts=None, updated_since=None, tickers=None, cursor=None,
                     normalize=True):
         """
         Fetch markets with optional filters. Auto-paginates.
         Returns normalized markets (with cents) by default.
+        Added optional max_close_ts to filter markets that close before a given Unix timestamp.
         """
         params = {}
         if status:
@@ -185,6 +186,8 @@ class KalshiClient:
             params["series_ticker"] = series_ticker
         if min_close_ts:
             params["min_close_ts"] = min_close_ts
+        if max_close_ts:
+            params["max_close_ts"] = max_close_ts
         if updated_since:
             params["updated_since"] = updated_since
         if tickers:

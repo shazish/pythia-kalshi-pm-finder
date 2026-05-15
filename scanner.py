@@ -87,7 +87,7 @@ class ScannerAgent:
     # ── Filtering ──────────────────────────────────────────────────
 
     def _passes_filters(self, market):
-        """Apply price threshold + liquidity filters + exclude multivariate combos."""
+        """Apply price threshold, liquidity filters, settlement window, and exclude multivariate combos."""
         yes_bid = market.get("yes_bid", 0) or 0
         yes_ask = market.get("yes_ask", 0) or 0
         no_bid = market.get("no_bid", 0) or 0
@@ -110,6 +110,22 @@ class ScannerAgent:
 
         # Volume secondary check
         if volume < self.config["min_volume"]:
+            return False
+
+        # Settlement date window: only keep markets that settle within 1 year from now
+        close_dt_str = market.get("close_date")
+        if close_dt_str:
+            try:
+                from datetime import datetime, timezone, timedelta
+                close_dt = datetime.fromisoformat(close_dt_str.replace('Z', '+00:00'))
+                now = datetime.now(timezone.utc)
+                if not (now <= close_dt <= now + timedelta(days=365)):
+                    return False
+            except Exception:
+                # If parsing fails, be conservative and skip the market
+                return False
+        else:
+            # No close date information – skip it
             return False
 
         # Exclude multivariate combo markets (sports multi-leg bets)
