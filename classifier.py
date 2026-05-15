@@ -11,12 +11,14 @@ This agent is designed to be called by the orchestrator via Hermes.
 CLASSIFIER_SYSTEM_PROMPT = """You are a Kalshi market classifier. Your job is to determine whether a binary outcome on Kalshi is an almost-certainty (CERTAIN), genuinely uncertain (LIKELY), or impossible to determine (UNCLEAR).
 
 CRITICAL RULES:
-1. You MUST perform at least 2 web searches BEFORE classifying. Searching is not optional — it is mandatory.
-2. Search for current, factual information about the event in question.
-3. Look for CONFIRMING signals (facts that support the high-confidence side) and CONTRADICTING signals (facts that argue against it).
-4. Classify as CERTAIN only when the outcome is a near-mathematical certainty based on current real-world knowledge.
-5. If ANY contradicting signal exists, you MUST downgrade from CERTAIN to LIKELY.
-6. Always consider settlement risk: could Kalshi's settlement mechanism rule differently than expected?
+1. You MUST perform at least 3 web searches BEFORE classifying. Searching is not optional — it is mandatory.
+2. Search 1: Current real-world status of the event.
+3. Search 2: Recent news — you MUST search for "[topic] news [current month and year]" or "[topic] update [current month]". This catches late-breaking developments that could invalidate an apparently obvious outcome. Do not skip this.
+4. Search 3+: Settlement criteria and any other relevant verification.
+5. Look for CONFIRMING signals (facts that support the high-confidence side) and CONTRADICTING signals (facts that argue against it).
+6. Classify as CERTAIN only when the outcome is a near-mathematical certainty based on current real-world knowledge.
+7. If ANY contradicting signal exists, you MUST downgrade from CERTAIN to LIKELY.
+8. Always consider settlement risk: could Kalshi's settlement mechanism rule differently than expected?
 
 Output MUST be valid JSON matching the schema below. Do not output anything else.
 
@@ -36,7 +38,8 @@ OUTPUT SCHEMA:
   ],
   "what_would_change_this": "Description of what scenario or evidence would make you wrong",
   "settlement_risk": "Any scenario where the obvious outcome could settle incorrectly, or empty string if none",
-  "searched_for": ["query 1", "query 2"]
+  "recent_developments": "What your recency search found — any news in the past 2 weeks relevant to this outcome. Write 'None found' only if the recency search returned nothing relevant.",
+  "searched_for": ["query 1", "query 2", "query 3 (recency search)"]
 }
 
 VALIDATION RULES (enforced after your output):
@@ -44,8 +47,9 @@ VALIDATION RULES (enforced after your output):
 - classification == "CERTAIN" requires confidence_score >= 95
 - classification == "CERTAIN" requires len(confirming_signals) >= 3
 - classification == "CERTAIN" requires len(contradicting_signals) == 0
+- classification == "CERTAIN" requires recent_developments to be non-empty (you must have done the recency search)
 - what_would_change_this must be non-empty
-- len(searched_for) >= 2
+- len(searched_for) >= 3
 
 If any validation fails, the market will be downgraded to LIKELY."""
 
@@ -76,11 +80,13 @@ CLOSE DATE: {candidate.get('close_date', 'N/A')}
 SETTLEMENT SOURCE: {candidate.get('settlement_source_url', 'N/A')}{rules_section}
 
 Instructions:
-1. First, perform at least 2 web searches about this event/topic.
-2. Search for: (a) the current real-world status of the event, and (b) any information about the settlement criteria.
-3. Read SETTLEMENT RULES carefully — Kalshi's settlement criteria can differ from the obvious real-world outcome.
-4. Classify whether the {side} outcome is certain, likely, or unclear.
-5. Output the structured JSON as specified."""
+1. Perform at least 3 web searches before classifying.
+2. Search A: current real-world status of this event.
+3. Search B (MANDATORY recency): "[topic] news [current month year]" — you must explicitly search for recent developments.
+4. Search C: settlement criteria / how Kalshi will resolve this market.
+5. Read SETTLEMENT RULES carefully — Kalshi's criteria can differ from the real-world outcome.
+6. Classify whether the {side} outcome is certain, likely, or unclear.
+7. Output the structured JSON as specified."""
     return prompt
 
 
@@ -98,12 +104,15 @@ def validate_classification(output):
         if len(output.get("contradicting_signals", [])) > 0:
             errors.append(f"Has {len(output.get('contradicting_signals', []))} contradicting_signals — auto-downgrade to LIKELY")
             output["classification"] = "LIKELY"
+        if not output.get("recent_developments", "").strip():
+            errors.append("recent_developments is empty — recency search was not performed")
+            output["classification"] = "LIKELY"
 
     if not output.get("what_would_change_this", "").strip():
         errors.append("what_would_change_this is empty")
 
-    if len(output.get("searched_for", [])) < 2:
-        errors.append(f"Expected >= 2 searched_for, got {len(output.get('searched_for', []))}")
+    if len(output.get("searched_for", [])) < 3:
+        errors.append(f"Expected >= 3 searched_for (including recency search), got {len(output.get('searched_for', []))}")
 
     # Validate field types
     if not isinstance(output.get("confidence_score"), (int, float)):

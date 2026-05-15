@@ -85,19 +85,35 @@ def print_scan(mode):
     print("AGENT INSTRUCTIONS:")
     print("=" * 60)
     print(f"""
-For EACH candidate above:
-  1. Perform >=2 web searches about the event
-  2. Classify per the system prompt and output schema above
-  3. Validation rules are enforced by the system prompt — follow them
+STEP 1 — Classify each candidate:
+  For EACH candidate above:
+    a. Perform >=3 web searches (current status, recency news, settlement criteria)
+    b. Classify per the system prompt and output schema above
+    c. Validation rules are enforced by the system prompt — follow them
 
-Save ALL results to: {CLASSIFIED_FILE}
-Format — JSON array where each item is:
-  {{
-    "candidate": {{...the original candidate data shown above...}},
-    "classification": {{...your JSON classification output...}}
-  }}
+STEP 2 — Devil's advocate pass (CERTAIN candidates only):
+  For each candidate you classified as CERTAIN, run a second check:
+    Ask yourself: "What is the strongest possible argument that {'{'}opposite side{'}'} wins?
+    Consider: any recent news, edge cases in the settlement rules, low-probability
+    but non-zero scenarios, or ambiguity in how Kalshi might resolve this."
 
-When done, run: python3 {__file__} finalize
+  If you can construct a COHERENT argument (2+ substantive sentences with real-world
+  grounding, not just hypotheticals), you MUST:
+    - Downgrade the classification from CERTAIN to LIKELY
+    - Add the argument as an entry in contradicting_signals with source_url if applicable
+    - Lower confidence_score to reflect the genuine uncertainty
+
+  If no coherent argument exists, keep CERTAIN as-is.
+
+STEP 3 — Save and finalize:
+  Save ALL results to: {CLASSIFIED_FILE}
+  Format — JSON array where each item is:
+    {{
+      "candidate": {{...the original candidate data shown above...}},
+      "classification": {{...your JSON classification output...}}
+    }}
+
+  Then run: python3 {__file__} finalize
 """)
 
 
