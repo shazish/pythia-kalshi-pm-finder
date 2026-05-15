@@ -16,7 +16,8 @@ DEFAULT_CONFIG = {
     "spread_max": 3,                # max bid-ask spread in cents
     "min_volume": 50,               # minimum volume as secondary signal
     "price_change_threshold": 3,    # cents — meaningful change vs cache
-    "max_pages": 20,                # max event pages per scan (2,000 events)
+    "max_pages": 20,                # max event pages per full scan (2,000 events)
+    "incremental_max_pages": 5,     # max market pages per incremental scan (500 markets)
     "cache_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/market_cache.json"),
     "candidates_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/candidates.json"),
     # Categories where "obvious outcome" markets exist
@@ -54,7 +55,8 @@ class ScannerAgent:
     def _get_cached(self, ticker):
         return self.cache["markets"].get(self._market_key(ticker))
 
-    def _update_cache(self, ticker, market_data):
+    def _update_cache(self, ticker, market_data, category=None):
+        existing = self.cache["markets"].get(self._market_key(ticker), {})
         self.cache["markets"][self._market_key(ticker)] = {
             "yes_bid": market_data.get("yes_bid", 0),
             "yes_ask": market_data.get("yes_ask", 0),
@@ -63,8 +65,31 @@ class ScannerAgent:
             "volume": market_data.get("volume", 0),
             "open_interest": market_data.get("open_interest", 0),
             "status": market_data.get("status", ""),
+            "close_date": market_data.get("close_date", ""),
+            "category": category or existing.get("category", ""),
             "last_seen": datetime.now(timezone.utc).isoformat(),
         }
+
+    def _prune_cache(self):
+        """Remove settled/closed markets and entries unseen for >30 days."""
+        now = datetime.now(timezone.utc)
+        to_remove = []
+        for ticker, data in self.cache["markets"].items():
+            if data.get("status") in ("settled", "closed"):
+                to_remove.append(ticker)
+                continue
+            last_seen = data.get("last_seen")
+            if last_seen:
+                try:
+                    age_days = (now - datetime.fromisoformat(last_seen)).days
+                    if age_days > 30:
+                        to_remove.append(ticker)
+                except Exception:
+                    pass
+        for ticker in to_remove:
+            del self.cache["markets"][ticker]
+        if to_remove:
+            print(f"[Scanner] Pruned {len(to_remove)} stale markets from cache")
 
     def _price_changed(self, ticker, market_data, threshold=None):
         """Check if price moved meaningfully vs cached value."""
@@ -227,24 +252,19 @@ class ScannerAgent:
                     ticker = m.get("ticker", "")
 
                     # Skip multivariate combo markets (multi-leg sports bets)
-                    # Detected by title containing multiple comma-separated "yes"/"no" legs
                     title = (m.get("title", "") or "").lower()
                     comma_legs = [s.strip() for s in title.split(",") if s.strip().startswith(("yes ", "no "))]
                     if len(comma_legs) > 2:
                         continue
 
-                    # Normalize and filter
                     normalized = self.client.normalize_market(m)
                     if self._passes_filters(normalized):
                         side = self._high_confidence_side(normalized)
-                        candidate = self._enrich_candidate(normalized, side, "full_scan")
-                        # Add event-level info
-                        candidate["event_title"] = event.get("title", "")
-                        candidate["category"] = cat
-                        candidate["event_ticker"] = event.get("event_ticker", "")
+                        # Pass event to avoid a redundant get_event() API call
+                        candidate = self._enrich_candidate(normalized, side, "full_scan", event=event)
                         candidate["rules_primary"] = m.get("rules_primary", "")
                         all_candidates.append(candidate)
-                    self._update_cache(ticker, normalized)
+                    self._update_cache(ticker, normalized, category=cat)
 
             cursor = data.get("cursor")
             if not cursor:
@@ -254,6 +274,7 @@ class ScannerAgent:
                 print(f"[Scanner] Progress: {events_scanned} events, {markets_scanned} markets, {len(all_candidates)} candidates")
 
         self.cache["last_full_scan"] = datetime.now(timezone.utc).isoformat()
+        self._prune_cache()
         self._save_cache()
         print(f"[Scanner] Full scan complete: {len(all_candidates)} candidates from {markets_scanned} markets across {events_scanned} events")
         return all_candidates
@@ -276,53 +297,88 @@ class ScannerAgent:
         return candidates
 
     def incremental_scan(self):
-        """Fetch only markets updated since last scan. Return changed candidates."""
+        """
+        Fetch recently updated markets (capped at incremental_max_pages pages).
+
+        The Kalshi /markets endpoint with updated_since returns all open markets
+        ordered by update time descending, so the first pages contain the most
+        recently changed markets. We stop early to keep the scan fast.
+        """
         last = self.cache.get("last_incremental_scan") or self.cache.get("last_full_scan")
         print(f"[Scanner] Starting incremental scan (since {last})")
 
+        max_pages = self.config["incremental_max_pages"]
         params = {"status": "open", "limit": 100}
         if last:
             params["updated_since"] = last
 
-        try:
-            updated_markets, _ = self.client.get_markets(**params)
-        except Exception as e:
-            print(f"[Scanner] Incremental scan failed: {e}")
-            return []
-
+        scan_categories = self.config["scan_categories"]
         candidates = []
-        for m in updated_markets:
-            ticker = m.get("ticker", "")
-            # Only forward if price changed meaningfully AND passes filters
-            if self._price_changed(ticker, m) and self._passes_filters(m):
-                side = self._high_confidence_side(m)
-                candidates.append(self._enrich_candidate(m, side, "incremental_scan"))
-            self._update_cache(ticker, m)
+        cursor = None
+        pages_fetched = 0
+
+        while pages_fetched < max_pages:
+            if cursor:
+                params["cursor"] = cursor
+            try:
+                data = self.client._get("/markets", params)
+            except Exception as e:
+                print(f"[Scanner] Incremental fetch error: {e}")
+                break
+
+            markets = data.get("markets", [])
+            if not markets:
+                break
+
+            for m in [self.client.normalize_market(x) for x in markets]:
+                ticker = m.get("ticker", "")
+                if self._price_changed(ticker, m) and self._passes_filters(m):
+                    side = self._high_confidence_side(m)
+                    candidate = self._enrich_candidate(m, side, "incremental_scan")
+                    category = candidate.get("category", "")
+                    if category and category not in scan_categories:
+                        self._update_cache(ticker, m, category=category)
+                        continue
+                    candidates.append(candidate)
+                    self._update_cache(ticker, m, category=category)
+                else:
+                    self._update_cache(ticker, m)
+
+            cursor = data.get("cursor")
+            pages_fetched += 1
+            if not cursor:
+                break
 
         self.cache["last_incremental_scan"] = datetime.now(timezone.utc).isoformat()
         self._save_cache()
-        print(f"[Scanner] Incremental scan complete: {len(candidates)} new candidates")
+        print(f"[Scanner] Incremental scan complete: {len(candidates)} candidates from {pages_fetched} pages")
         return candidates
 
-    def _enrich_candidate(self, market, side, scan_type):
-        """Build a candidate dict with all info the Classifier needs."""
+    def _enrich_candidate(self, market, side, scan_type, event=None):
+        """
+        Build a candidate dict with all info the Classifier needs.
+
+        Pass `event` when already available (e.g. from full_scan's nested markets
+        response) to avoid a redundant get_event() API call.
+        """
         event_ticker = market.get("event_ticker", "")
-        # Try to get event-level details
-        event_data = {}
-        if event_ticker:
+
+        if event is None and event_ticker:
             try:
                 event_data = self.client.get_event(event_ticker)
+                event = event_data.get("event", event_data) if isinstance(event_data, dict) else {}
             except Exception:
-                pass
-
-        event = event_data.get("event", event_data) if isinstance(event_data, dict) else {}
+                event = {}
+        elif event is None:
+            event = {}
 
         return {
             "ticker": market.get("ticker", ""),
             "title": market.get("title", "") or event.get("title", ""),
             "subtitle": market.get("subtitle", "") or event.get("sub_title", ""),
-            "event_ticker": event_ticker,
+            "event_ticker": event_ticker or event.get("event_ticker", ""),
             "series_ticker": market.get("series_ticker", "") or event.get("series_ticker", ""),
+            "category": event.get("category", ""),
             "yes_bid": market.get("yes_bid"),
             "yes_ask": market.get("yes_ask"),
             "no_bid": market.get("no_bid"),
@@ -336,6 +392,7 @@ class ScannerAgent:
                 event.get("settlement_source_url", "") or
                 self._extract_settlement_url(event)
             ),
+            "rules_primary": market.get("rules_primary", "") or event.get("rules_primary", ""),
             "high_confidence_side": side,
             "implied_probability": self._implied_prob(market, side),
             "scan_type": scan_type,

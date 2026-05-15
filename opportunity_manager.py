@@ -62,40 +62,60 @@ class OpportunityManager:
 
     def compute_edge(self, classified_market):
         """
-        Compute edge after fees.
-        edge_after_fees = implied_probability - (1 + fee_rate)
-        implied_probability is in cents (e.g., 95 = 95%)
-        Returns edge as a decimal (e.g., 0.03 = 3%)
+        Compute expected edge after fees for a CERTAIN classification.
+
+        The edge comes from the gap between what the market prices the outcome
+        (market_price) and what the classifier believes is the true probability
+        (true_prob ≈ confidence_score/100).
+
+        For a binary contract:
+          - You pay market_price per contract (e.g. $0.90)
+          - You receive $1.00 if correct, $0 if wrong
+          - Kalshi charges fee_rate on profit (= 1 - market_price)
+
+        Returns edge as a decimal fraction of cost (e.g. 0.05 = 5%).
         """
         candidate = classified_market.get("candidate", {})
-        side = classified_market.get("classification", {}).get("high_confidence_side", "YES")
-        implied_prob = candidate.get("implied_probability", 0) / 100.0  # convert to decimal
+        classification = classified_market.get("classification", {})
+        market_price = candidate.get("implied_probability", 0) / 100.0
+        true_prob = classification.get("confidence_score", 95) / 100.0
         fee_rate = self.config["fee_rate"]
 
-        # Cost to buy = implied_prob * (1 + fee_rate)
-        cost = implied_prob * (1 + fee_rate)
-        # Payout = $1 if correct, expected payout = implied_prob * 1.0
-        expected_payout = implied_prob
-        # Edge = (expected_payout - cost) / cost
-        if cost <= 0:
+        if market_price <= 0:
             return 0.0
-        edge = (expected_payout - cost) / cost
-        return edge
 
-    def compute_position_size(self, edge, implied_prob):
-        """
-        Simplified Kelly fraction with cap.
-        kelly = edge / (1 - probability_of_loss)
-        final = min(kelly, max_bankroll_pct) * bankroll
-        """
-        prob_loss = 1 - implied_prob
-        if prob_loss <= 0:
-            prob_loss = 0.001  # avoid division by zero
+        profit_on_win = 1.0 - market_price
+        net_profit_on_win = profit_on_win * (1.0 - fee_rate)
+        ev = true_prob * net_profit_on_win - (1.0 - true_prob) * market_price
+        return ev / market_price
 
-        kelly = edge / prob_loss
-        capped = min(kelly, self.config["max_bankroll_pct"])
-        bankroll = self.config["default_bankroll"]
-        return round(capped * bankroll, 2)
+    def compute_position_size(self, edge, market_price, true_prob):
+        """
+        Kelly criterion with cap.
+
+        Kelly fraction = EV / net_profit_on_win
+        where net_profit_on_win = (1 - market_price) * (1 - fee_rate)
+        """
+        fee_rate = self.config["fee_rate"]
+        net_profit_on_win = (1.0 - market_price) * (1.0 - fee_rate)
+        if net_profit_on_win <= 0:
+            return 0.0
+
+        kelly = edge * market_price / net_profit_on_win
+        capped = min(max(kelly, 0.0), self.config["max_bankroll_pct"])
+        return round(capped * self.config["default_bankroll"], 2)
+
+    def compute_days_to_close(self, candidate):
+        """Return days until market closes, minimum 1."""
+        close_date = candidate.get("close_date", "")
+        if not close_date:
+            return None
+        try:
+            close_dt = datetime.fromisoformat(close_date.replace("Z", "+00:00"))
+            delta = (close_dt - datetime.now(timezone.utc)).days
+            return max(1, delta)
+        except Exception:
+            return None
 
     # ── Processing ─────────────────────────────────────────────────
 
@@ -132,16 +152,22 @@ class OpportunityManager:
                 })
                 continue
 
-            # Compute edge
+            # Compute edge and sizing
             edge = self.compute_edge(cm)
-            implied_prob = candidate.get("implied_probability", 0) / 100.0
-            position_size = self.compute_position_size(edge, implied_prob)
+            market_price = candidate.get("implied_probability", 0) / 100.0
+            true_prob = classification.get("confidence_score", 95) / 100.0
+            position_size = self.compute_position_size(edge, market_price, true_prob)
+            days_to_close = self.compute_days_to_close(candidate)
+            annualized_edge = round(edge * (365 / days_to_close), 4) if days_to_close else None
 
             opportunity = {
                 **cm,
                 "edge_after_fees": round(edge, 4),
+                "annualized_edge": annualized_edge,
+                "days_to_close": days_to_close,
                 "position_size_usd": position_size,
-                "implied_probability": implied_prob,
+                "market_price": market_price,
+                "true_prob_used": true_prob,
                 "fee_rate_used": self.config["fee_rate"],
                 "processed_at": datetime.now(timezone.utc).isoformat(),
             }
@@ -180,14 +206,20 @@ class OpportunityManager:
         cl = opportunity.get("classification", {})
         side = cl.get("high_confidence_side", "?")
         prob = c.get("implied_probability", 0)
-        edge = opportunity.get("edge_after_fees", 0) * 100
+        edge_pct = opportunity.get("edge_after_fees", 0) * 100
         size = opportunity.get("position_size_usd", 0)
+        days = opportunity.get("days_to_close")
+        ann = opportunity.get("annualized_edge")
+
+        edge_str = f"{edge_pct:.1f}%"
+        if ann is not None and days is not None:
+            edge_str += f"  ({ann * 100:.0f}% ann, {days}d to close)"
 
         lines = [
             f"KALSHI OPPORTUNITY: {side} @ {prob}c",
             f"Title: {c.get('title', 'N/A')}",
             f"Ticker: {c.get('ticker', 'N/A')}",
-            f"Edge after fees: {edge:.1f}%",
+            f"Edge after fees: {edge_str}",
             f"Suggested size: ${size:.0f}",
             f"Close date: {c.get('close_date', 'N/A')}",
             f"Confidence: {cl.get('confidence_score', 'N/A')}%",

@@ -55,6 +55,9 @@ def build_classifier_prompt(candidate):
     side = candidate["high_confidence_side"]
     prob = candidate["implied_probability"]
 
+    rules = candidate.get("rules_primary", "").strip()
+    rules_section = f"\nSETTLEMENT RULES: {rules}" if rules else ""
+
     prompt = f"""Classify this Kalshi market:
 
 TITLE: {candidate.get('title', 'N/A')}
@@ -70,13 +73,14 @@ VOLUME: {candidate.get('volume', 'N/A')}
 OPEN INTEREST: {candidate.get('open_interest', 'N/A')}
 CLOSE DATE: {candidate.get('close_date', 'N/A')}
 
-SETTLEMENT SOURCE: {candidate.get('settlement_source_url', 'N/A')}
+SETTLEMENT SOURCE: {candidate.get('settlement_source_url', 'N/A')}{rules_section}
 
 Instructions:
 1. First, perform at least 2 web searches about this event/topic.
 2. Search for: (a) the current real-world status of the event, and (b) any information about the settlement criteria.
-3. Classify whether the {side} outcome is certain, likely, or unclear.
-4. Output the structured JSON as specified."""
+3. Read SETTLEMENT RULES carefully — Kalshi's settlement criteria can differ from the obvious real-world outcome.
+4. Classify whether the {side} outcome is certain, likely, or unclear.
+5. Output the structured JSON as specified."""
     return prompt
 
 
