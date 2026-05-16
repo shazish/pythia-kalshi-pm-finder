@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Kalshi / Polymarket Trading Pipeline</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    padding: 40px 32px;
+    min-width: 1100px;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #f8fafc;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    font-size: 12px;
+    color: #64748b;
+    margin-bottom: 36px;
+  }
+
+  /* ── Layer labels ── */
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .layer {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  .layer-label {
+    width: 110px;
+    min-width: 110px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 14px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #475569;
+  }
+
+  .layer-body {
+    flex: 1;
+    padding: 14px 0;
+    border-left: 2px solid #1e293b;
+    padding-left: 20px;
+    position: relative;
+  }
+
+  /* Arrow between layers */
+  .arrow-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+  .arrow-spacer { width: 110px; min-width: 110px; }
+  .arrow-line {
+    flex: 1;
+    padding-left: 20px;
+    border-left: 2px solid #1e293b;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .arrow-line svg { flex-shrink: 0; }
+  .arrow-label {
+    font-size: 10px;
+    color: #475569;
+    font-style: italic;
+  }
+
+  /* ── Cards ── */
+  .cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .card {
+    border-radius: 8px;
+    padding: 11px 14px;
+    font-size: 12px;
+    line-height: 1.5;
+    border: 1px solid transparent;
+  }
+
+  /* Platform colours */
+  .kalshi   { background: #0c2340; border-color: #1d4ed8; }
+  .polymarket { background: #0f2b1a; border-color: #15803d; }
+  .shared   { background: #1c1230; border-color: #7c3aed; }
+  .output   { background: #1a1208; border-color: #b45309; }
+  .file     { background: #111827; border-color: #374151; }
+
+  .card-title {
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.4px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .badge {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    letter-spacing: 0.3px;
+  }
+  .badge-kalshi     { background: #1d4ed8; color: #bfdbfe; }
+  .badge-poly       { background: #15803d; color: #bbf7d0; }
+  .badge-llm        { background: #7c3aed; color: #ddd6fe; }
+  .badge-quant      { background: #b45309; color: #fde68a; }
+  .badge-file       { background: #374151; color: #d1d5db; }
+  .badge-hourly     { background: #0e4f4f; color: #99f6e4; }
+  .badge-daily      { background: #3b1f00; color: #fcd34d; }
+
+  .detail {
+    color: #94a3b8;
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .detail li { list-style: none; padding-left: 10px; position: relative; }
+  .detail li::before { content: '›'; position: absolute; left: 0; color: #475569; }
+
+  /* Divider line with label */
+  .merge-label {
+    font-size: 10px;
+    color: #7c3aed;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 2px 8px;
+    border: 1px solid #4c1d95;
+    border-radius: 4px;
+    background: #1c1230;
+    white-space: nowrap;
+  }
+
+  /* Filter chain */
+  .filter-chain {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .filter {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #cbd5e1;
+    white-space: nowrap;
+  }
+  .filter-arrow {
+    color: #475569;
+    font-size: 11px;
+  }
+
+  /* Three-column output */
+  .output-cols {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+
+  .sheet-list {
+    margin-top: 4px;
+  }
+  .sheet {
+    font-size: 10px;
+    color: #94a3b8;
+    padding: 2px 0 2px 10px;
+    border-left: 2px solid #374151;
+    margin-top: 3px;
+  }
+  .sheet.green  { border-color: #22c55e; color: #86efac; }
+  .sheet.grey   { border-color: #6b7280; color: #d1d5db; }
+  .sheet.yellow { border-color: #eab308; color: #fde68a; }
+
+  hr.layer-sep {
+    border: none;
+    border-top: 1px dashed #1e293b;
+    margin: 2px 0 2px 130px;
+  }
+
+  /* ── Tooltips ─────────────────────────────────────────────────────────────
+     Hover over any dotted-underlined term to see its definition.
+     Pure CSS — no JavaScript required.
+  ── */
+  .tip {
+    border-bottom: 1px dotted #94a3b8;
+    cursor: help;
+    position: relative;
+  }
+
+  .tip::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #0d1525;
+    border: 1px solid #475569;
+    border-radius: 7px;
+    padding: 10px 13px;
+    font-size: 11px;
+    font-weight: 400;
+    font-style: normal;
+    line-height: 1.6;
+    color: #e2e8f0;
+    width: 290px;
+    white-space: normal;
+    text-align: left;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.14s ease;
+    z-index: 1000;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.65);
+  }
+
+  /* Small downward arrow connecting tooltip to the term */
+  .tip::before {
+    content: '';
+    position: absolute;
+    bottom: calc(100% + 3px);
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #475569;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.14s ease;
+    z-index: 1001;
+  }
+
+  .tip:hover::after,
+  .tip:hover::before {
+    opacity: 1;
+  }
+
+  /* Wider tooltip for longer definitions */
+  .tip-wide::after { width: 340px; }
+
+  /* Shift left when the term sits near the right edge of a card */
+  .tip-l::after {
+    left: auto;
+    right: 0;
+    transform: none;
+  }
+  .tip-l::before {
+    left: auto;
+    right: 12px;
+    transform: none;
+  }
+
+  /* Shift right when the term sits near the left edge */
+  .tip-r::after {
+    left: 0;
+    transform: none;
+  }
+  .tip-r::before {
+    left: 12px;
+    transform: none;
+  }
+
+  /* ── Glossary ── */
+  .glossary {
+    margin-top: 48px;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .glossary summary {
+    padding: 12px 18px;
+    background: #111827;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: #64748b;
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .glossary summary::-webkit-details-marker { display: none; }
+  .glossary summary::before {
+    content: '▶';
+    font-size: 8px;
+    transition: transform 0.15s;
+  }
+  .glossary[open] summary::before { transform: rotate(90deg); }
+  .glossary summary:hover { color: #94a3b8; }
+
+  .glossary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 0;
+    padding: 0;
+  }
+  .gterm {
+    padding: 12px 18px;
+    border-top: 1px solid #1e293b;
+    font-size: 11px;
+  }
+  .gterm dt {
+    font-weight: 700;
+    color: #e2e8f0;
+    font-size: 11px;
+    margin-bottom: 3px;
+  }
+  .gterm dd {
+    color: #94a3b8;
+    line-height: 1.6;
+  }
+  .gterm dd code {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    background: #1e293b;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #fde68a;
+  }
+</style>
+</head>
+<body>
+
+<h1>Prediction Market Trading Pipeline</h1>
+<p class="subtitle">
+  Kalshi (USD) &amp; <span class="tip" data-tip="Polymarket settles bets in USDC — a US-dollar stablecoin on the Polygon blockchain. Winning means receiving USDC in a crypto wallet, not direct USD. A separate cash-out step through a crypto exchange is required.">Polymarket (USDC)</span>
+  · Scanner → Classifier → Opportunity Manager → Report
+  &nbsp;·&nbsp; <em style="color:#475569">hover dotted terms for definitions</em>
+</p>
+
+<div class="pipeline">
+
+  <!-- ══════════════════════════════════════════════════════ ENTRY -->
+  <div class="layer">
+    <div class="layer-label">Entry</div>
+    <div class="layer-body">
+      <div class="cards">
+
+        <div class="card kalshi">
+          <div class="card-title">
+            Kalshi — Price-first
+            <span class="badge badge-kalshi">USD</span>
+          </div>
+          <div class="detail">
+            <li><span class="badge badge-hourly">hourly</span> <strong>incremental</strong> — price-change scan, 5 pages</li>
+            <li><span class="badge badge-daily">daily</span>&nbsp; <strong>full</strong> — all events, 85c+ <span class="tip" data-tip="Minimum market price a candidate must reach to be included. At 85c the crowd already believes the outcome is ≥85% likely. The deep scan uses 80c to catch more opportunities at the cost of more noise.">threshold</span></li>
+            <li><span class="badge badge-daily">daily</span>&nbsp; <strong>deep</strong> — all events, 80c+ <span class="tip" data-tip="Minimum market price a candidate must reach to be included. At 85c the crowd already believes the outcome is ≥85% likely. The deep scan uses 80c to catch more opportunities at the cost of more noise.">threshold</span></li>
+          </div>
+        </div>
+
+        <div class="card kalshi">
+          <div class="card-title">
+            Kalshi — Volume-first
+            <span class="badge badge-kalshi">USD</span>
+          </div>
+          <div class="detail">
+            <li><span class="badge badge-daily">daily</span>&nbsp; <strong>anomaly</strong> — <span class="tip" data-tip="Large, informed bets from professional traders or people with deep research. When significant capital flows against the obvious outcome in a mid-probability market, it can signal the crowd is wrong about the outcome.">smart money</span> scan, 20–79c</li>
+            <li>Entry: <span class="tip" data-tip="Implied High-Confidence dollars = volume × high-confidence-side price / 100. Measures how much real money is sitting behind the consensus bet. Filters out illiquid markets that only look certain because nobody has traded them.">implied HC $</span> = volume × HC price / 100 ≥ $10k</li>
+          </div>
+        </div>
+
+        <div class="card polymarket">
+          <div class="card-title">
+            Polymarket — Price-first
+            <span class="badge badge-poly tip" data-tip="USDC is a US-dollar stablecoin on the Polygon blockchain. Polymarket payouts arrive as USDC in a crypto wallet — not direct USD. A cash-out step through an exchange is needed to convert to dollars.">USDC</span>
+          </div>
+          <div class="detail">
+            <li><span class="badge badge-hourly">hourly</span> <strong>pm-incremental</strong> — price-change scan</li>
+            <li><span class="badge badge-daily">daily</span>&nbsp; <strong>pm-full</strong> — all events, 85c+, min $1k <span class="tip" data-tip="Total USDC traded in this market. Higher volume means more real money behind the price, making it a more reliable probability signal. Low-volume markets at 99c can be illiquid placeholders with no actual bets behind them.">vol</span></li>
+            <li><span class="badge badge-daily">daily</span>&nbsp; <strong>pm-deep</strong> — all events, 80c+ <span class="tip" data-tip="Minimum market price a candidate must reach to be included. At 85c the crowd already believes the outcome is ≥85% likely. The deep scan uses 80c to catch more opportunities at the cost of more noise.">threshold</span></li>
+          </div>
+        </div>
+
+        <div class="card polymarket">
+          <div class="card-title">
+            Polymarket — Volume-first
+            <span class="badge badge-poly">USDC</span>
+          </div>
+          <div class="detail">
+            <li><span class="badge badge-daily">daily</span>&nbsp; <strong>pm-anomaly</strong> — <span class="tip" data-tip="Large, informed bets from professional traders or people with deep research. When significant capital flows against the obvious outcome in a mid-probability market, it can signal the crowd is wrong about the outcome.">smart money</span>, 20–79c</li>
+            <li>Entry: <span class="tip" data-tip="Implied High-Confidence dollars = volume × high-confidence-side price / 100. Measures how much real money is sitting behind the consensus bet. Filters out illiquid markets that only look certain because nobody has traded them.">implied HC $</span> ≥ $10k USDC</li>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">
+    <div class="arrow-spacer"></div>
+    <div class="arrow-line">
+      <svg width="12" height="20" viewBox="0 0 12 20"><path d="M6 0v16M1 11l5 7 5-7" stroke="#334155" stroke-width="1.5" fill="none"/></svg>
+      <span class="arrow-label">python3 kalshi_cron.py &lt;mode&gt;</span>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ SCANNER -->
+  <div class="layer">
+    <div class="layer-label">Scanner</div>
+    <div class="layer-body">
+      <div class="cards">
+
+        <div class="card kalshi" style="flex:1; min-width:300px">
+          <div class="card-title">ScannerAgent <span class="badge badge-kalshi">scanner.py</span></div>
+          <div class="filter-chain">
+            <span class="filter">GET /events?with_nested_markets</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter">category filter</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter">price ≥ <span class="tip tip-r" data-tip="Minimum market price to be considered. 85c means the crowd already thinks the outcome is ≥85% likely. Candidates below this are ignored as too uncertain.">threshold</span></span>
+            <span class="filter-arrow">→</span>
+            <span class="filter"><span class="tip" data-tip="Bid-ask spread — the gap between the highest buy price and the lowest sell price. A spread ≤ 3c means the market is liquid enough to enter at a fair price. Wide spreads eat into your edge before you even place a bet.">spread</span> ≤ 3c</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter"><span class="tip" data-tip="Total contracts traded in this market. Higher volume = more real money behind the price = more trustworthy probability signal. A 99c price with zero volume is just a placeholder — nobody has actually bet on it.">volume</span> ≥ 50</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter">close ≤ 365d</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter"><span class="tip" data-tip="Removes multi-leg bets that require several independent outcomes to all win (e.g., Team A AND Team B AND Team C). These show artificially high prices because all legs must win — a 90% per-leg probability across 4 legs is only ~66% combined.">combo exclusion</span></span>
+            <span class="filter-arrow">→</span>
+            <span class="filter"><span class="tip tip-l" data-tip="Flags unusually large trading on the opposite side from the obvious outcome. Could be informed traders who know something the market does not, or routine hedging. Worth investigating before acting.">volume anomaly</span> detection</span>
+          </div>
+        </div>
+
+        <div class="card kalshi" style="flex:1; min-width:260px">
+          <div class="card-title">AnomalyScanner <span class="badge badge-kalshi">anomaly_scanner.py</span></div>
+          <div class="filter-chain">
+            <span class="filter">GET /events?with_nested_markets</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter">category filter</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter"><span class="tip tip-r" data-tip="This mid-range is intentional: price-first scans already cover 80c+. The anomaly scanner looks at markets the crowd rates 20–79% — where large bets on one side could indicate the price is wrong.">20c ≤ price ≤ 79c</span></span>
+            <span class="filter-arrow">→</span>
+            <span class="filter"><span class="tip" data-tip="Total contracts traded. The anomaly scanner requires 500 (vs. 50 for price-first) because we need a meaningful amount of real money flowing to call something anomalous — not just a handful of trades.">volume</span> ≥ 500</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter"><span class="tip" data-tip="Implied High-Confidence dollars = volume × price / 100. Ensures the anomalous bet represents at least $10,000 in real capital — small anomalies are ignored as noise.">implied HC $</span> ≥ $10k</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter">sort by <span class="tip tip-l" data-tip="High-Confidence dollars — the dollar value implied by the largest one-sided bet. Sorting descending surfaces the most financially significant signals first.">HC $</span> desc</span>
+          </div>
+        </div>
+
+        <div class="card polymarket" style="flex:1; min-width:300px">
+          <div class="card-title">PolymarketScanner <span class="badge badge-poly">polymarket_scanner.py</span></div>
+          <div class="filter-chain">
+            <span class="filter">Gamma API /events</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter">category map</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter">outcomePrices → cents</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter">price ≥ <span class="tip" data-tip="Minimum market price to be considered. 85c means the crowd already thinks the outcome is ≥85% likely. Candidates below this are ignored as too uncertain.">threshold</span></span>
+            <span class="filter-arrow">→</span>
+            <span class="filter"><span class="tip" data-tip="Total USDC traded. $1,000 minimum (vs. 50 contracts on Kalshi) because Polymarket volume is in dollars — low-dollar markets are illiquid even if they look high-priced.">vol</span> ≥ $1k USDC</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter">close ≤ 365d</span>
+            <span class="filter-arrow">→</span>
+            <span class="filter"><span class="tip tip-l" data-tip="Flags unusually large trading on the opposite side from the obvious outcome. Could be informed traders who know something the market does not, or routine hedging. Worth investigating before acting.">volume anomaly</span> detection</span>
+          </div>
+          <div class="detail" style="margin-top:6px">
+            <li>anomaly mode: 20–79c, <span class="tip" data-tip="Implied High-Confidence dollars = volume × price / 100. Ensures the anomalous bet represents at least $10,000 in real USDC capital before it is flagged.">implied HC $</span> ≥ $10k USDC, sort by HC $ desc</li>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">
+    <div class="arrow-spacer"></div>
+    <div class="arrow-line">
+      <svg width="12" height="20" viewBox="0 0 12 20"><path d="M6 0v16M1 11l5 7 5-7" stroke="#334155" stroke-width="1.5" fill="none"/></svg>
+      <span class="arrow-label">candidates saved · candidate_type tagged (regular / anomaly / polymarket / pm_anomaly)</span>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ CANDIDATES -->
+  <div class="layer">
+    <div class="layer-label">Candidates</div>
+    <div class="layer-body">
+      <div class="cards">
+        <div class="card file">
+          <div class="card-title"><span class="badge badge-file">cache/candidates.json</span></div>
+          <div class="detail"><li>Kalshi price-first · full / deep / incremental</li></div>
+        </div>
+        <div class="card file">
+          <div class="card-title"><span class="badge badge-file">cache/anomaly_candidates.json</span></div>
+          <div class="detail"><li>Kalshi volume-first · anomaly scan</li></div>
+        </div>
+        <div class="card file">
+          <div class="card-title"><span class="badge badge-file">cache/pm_candidates.json</span></div>
+          <div class="detail"><li>Polymarket · all four modes</li></div>
+        </div>
+        <div class="card file">
+          <div class="card-title"><span class="badge badge-file">cache/market_cache.json &amp; pm_cache.json</span></div>
+          <div class="detail"><li>Price history for incremental change detection · pruned after 30d</li></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">
+    <div class="arrow-spacer"></div>
+    <div class="arrow-line">
+      <svg width="12" height="20" viewBox="0 0 12 20"><path d="M6 0v16M1 11l5 7 5-7" stroke="#334155" stroke-width="1.5" fill="none"/></svg>
+      <div class="merge-label">all platforms merge here — agent classifies each candidate</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ CLASSIFIER -->
+  <div class="layer">
+    <div class="layer-label">Classifier</div>
+    <div class="layer-body">
+      <div class="cards">
+
+        <div class="card shared" style="flex:2; min-width:340px">
+          <div class="card-title">
+            Hermes Agent — LLM + Web Search
+            <span class="badge badge-llm">classifier.py</span>
+          </div>
+          <div class="detail" style="margin-top:4px">
+            <li><strong>Regular prompt</strong> (price-first): "Is this outcome near-certain?"</li>
+            <li><strong>Anomaly prompt</strong> (volume-first): "Is the market mispriced? Is the <span class="tip" data-tip="Large, informed bets — typically from professional traders or people with deep research. When significant capital flows against the obvious outcome, it signals the crowd may be wrong.">smart money</span> right?"</li>
+            <li>Both prompts require ≥ 3 web searches before classifying</li>
+            <li>Search A — current real-world status of the event</li>
+            <li>Search B — <span class="tip tip-r" data-tip="A mandatory search for '[topic] news [current month year]'. Forces the classifier to check for breaking developments — a deal, reversal, or announcement in the past 2 weeks — that could invalidate an apparently obvious outcome.">mandatory recency search</span>: "[topic] news [month year]"</li>
+            <li>Search C — <span class="tip" data-tip="How the platform determines the final outcome and pays out winners. Settlement risk is when the platform might resolve the market differently than the real-world result — due to ambiguous rules or a lagging data source.">settlement</span> criteria / how the platform resolves this market</li>
+            <li><span class="tip" data-tip="Flags unusually large trading on the opposite side from the obvious outcome. The warning is injected into the classifier prompt so the LLM is forced to address it before reaching a conclusion.">Volume anomaly</span> warning injected when opposite-side implied $ ≥ $5k</li>
+          </div>
+        </div>
+
+        <div class="card shared" style="flex:1; min-width:220px">
+          <div class="card-title">
+            <span class="tip tip-r" data-tip="A built-in adversarial pass where the LLM is explicitly asked for the strongest argument AGAINST its own CERTAIN conclusion. If it finds substantive counter-arguments, the classification is downgraded to LIKELY. Prevents overconfident classifications.">Devil's Advocate</span> Pass
+            <span class="badge badge-llm">CERTAIN only</span>
+          </div>
+          <div class="detail" style="margin-top:4px">
+            <li>Agent attempts strongest counter-argument</li>
+            <li>If 2+ substantive sentences found → downgrade to LIKELY</li>
+            <li><span class="tip tip-r" data-tip="A fact found during research that argues against the obvious outcome. Even one contradicting signal blocks a CERTAIN classification, forcing genuine scrutiny before committing.">Contradicting signal</span> added with source URL</li>
+            <li>Confidence score lowered to reflect uncertainty</li>
+          </div>
+        </div>
+
+        <div class="card shared" style="flex:1; min-width:220px">
+          <div class="card-title">
+            Validation
+            <span class="badge badge-llm">validate_classification()</span>
+          </div>
+          <div class="detail" style="margin-top:4px">
+            <li><span class="tip tip-r" data-tip="CERTAIN = near-mathematical certainty (≥95% confidence, ≥3 confirming signals, zero contradicting signals). LIKELY = probable but not certain enough to act on. UNCLEAR = insufficient evidence to classify.">CERTAIN</span> requires confidence ≥ 95%</li>
+            <li>CERTAIN requires ≥ 3 reasons</li>
+            <li>CERTAIN requires ≥ 3 <span class="tip" data-tip="Facts that support the high-confidence outcome — news articles, official statements, data. Each must include a source URL. Three or more are required before a CERTAIN classification can be issued.">confirming signals</span></li>
+            <li>CERTAIN requires 0 <span class="tip tip-l" data-tip="Facts that argue against the obvious outcome. Even one contradicting signal blocks a CERTAIN classification, forcing genuine scrutiny before committing.">contradicting signals</span></li>
+            <li>CERTAIN requires non-empty recent_developments</li>
+            <li>All classes require ≥ 3 searched_for entries</li>
+            <li>Violations auto-downgrade to LIKELY</li>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">
+    <div class="arrow-spacer"></div>
+    <div class="arrow-line">
+      <svg width="12" height="20" viewBox="0 0 12 20"><path d="M6 0v16M1 11l5 7 5-7" stroke="#334155" stroke-width="1.5" fill="none"/></svg>
+      <span class="arrow-label">agent writes cache/classified.json · then runs: python3 kalshi_cron.py finalize</span>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ OPP MANAGER -->
+  <div class="layer">
+    <div class="layer-label">Opportunity Manager</div>
+    <div class="layer-body">
+      <div class="cards">
+
+        <div class="card output" style="flex:2; min-width:340px">
+          <div class="card-title">
+            Edge &amp; Sizing
+            <span class="badge badge-quant">opportunity_manager.py</span>
+          </div>
+          <div class="detail" style="margin-top:4px">
+            <li>Only processes <span class="tip tip-r" data-tip="CERTAIN = near-mathematical certainty (≥95% confidence, ≥3 confirming signals, zero contradicting signals). Only CERTAIN classifications reach the opportunity manager — LIKELY and UNCLEAR are routed to the log and skipped.">CERTAIN</span> + valid classifications</li>
+            <li><strong><span class="tip tip-r" data-tip="Your expected return above the fair price. If an outcome is truly 99% likely but the market prices it at 94c, your edge is ~5% — for every $100 bet you expect ~$5 more profit than a fair bet would pay. Positive edge is required to send a notification.">Edge</span></strong> = <span class="tip" data-tip="Expected Value — the average profit if you made the same bet many times. EV = (P(win) × profit if win) − (P(lose) × loss if lose). A positive EV means the bet is profitable in expectation across many repetitions.">EV</span> / market_price where EV = <span class="tip" data-tip="The classifier LLM's assessment of the real probability, derived from confidence_score ÷ 100. This is distinct from the market price. The gap between true_prob and market price is what creates (or eliminates) positive edge.">true_prob</span> × <span class="tip" data-tip="Your actual profit per dollar staked if the bet wins, after fees. On a 90c market: you risk 90c to gain 10c minus fees — roughly 8.5c net profit per 90c staked.">net_profit_on_win</span> − (1−true_prob) × cost</li>
+            <li><strong>true_prob</strong> = confidence_score / 100 (from classifier, not market price)</li>
+            <li><strong>net_profit_on_win</strong> = (1 − market_price) × (1 − <span class="tip" data-tip="The platform's cut on winnings. Kalshi charges ~1.5% on average (quadratic fee model). This is deducted from your profit, reducing effective edge. Always factor fees in — a 2% edge before fees can turn negative after.">fee_rate</span>)</li>
+            <li><strong><span class="tip tip-r" data-tip="Kelly Criterion (J.L. Kelly Jr., 1956) — computes the optimal fraction of your bankroll to bet for maximum long-run growth. We cap at 5% because Kelly assumes your edge estimate is perfect; real-world uncertainty means full Kelly risks ruin on bad estimates.">Kelly</span></strong> = edge × market_price / net_profit_on_win · capped at 5% <span class="tip" data-tip="Total capital set aside for prediction market betting. Kelly sizing uses this to compute max dollars per bet. Default is $1,000 — adjust in config.yaml.">bankroll</span></li>
+            <li><strong><span class="tip" data-tip="Edge scaled to a yearly rate for fair comparison across time horizons — like an annual interest rate. A 4% edge closing in 30 days annualises to ~49%; the same 4% closing in 300 days is only ~5%. Helps prioritize shorter-duration bets.">Annualised edge</span></strong> = edge × (365 / days_to_close)</li>
+            <li><strong><span class="tip tip-r" data-tip="Minimum edge required to send a notification. Set at 3% — below this the opportunity exists in the log but is not worth acting on after accounting for execution friction, estimate error, and fees.">Threshold</span></strong>: edge ≥ 3% to notify · below threshold → logged only</li>
+            <li><strong><span class="tip tip-r" data-tip="Deduplication with Time-To-Live. Once an opportunity is notified, the same market+side is suppressed for 7 days even if the scanner runs every 2 hours. Prevents the same bet from flooding your notifications.">Dedup TTL</span></strong>: 7 days — same market+side not re-notified within window</li>
+          </div>
+        </div>
+
+        <div class="card output" style="flex:1; min-width:200px">
+          <div class="card-title">Routing</div>
+          <div class="detail" style="margin-top:4px">
+            <li>→ <strong>notify</strong>: <span class="tip tip-r" data-tip="Your expected return above the fair price. Positive edge means the bet pays more than the risk warrants. A 3% edge on a 90-day bet is modest; the same edge on a 7-day bet is excellent.">edge</span> ≥ 3%, not deduped</li>
+            <li>→ <strong>logged_below_threshold</strong>: CERTAIN but thin edge</li>
+            <li>→ <strong>skipped_validation_failed</strong>: CERTAIN, bad structure</li>
+            <li>→ <strong>skipped_already_notified</strong>: <span class="tip" data-tip="Deduplication — the system remembers which opportunities it already notified. The same market+side is suppressed for 7 days to prevent hourly re-alerts for the same bet.">dedup</span> hit</li>
+            <li>→ <strong>skipped_not_certain</strong>: LIKELY / UNCLEAR</li>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">
+    <div class="arrow-spacer"></div>
+    <div class="arrow-line">
+      <svg width="12" height="20" viewBox="0 0 12 20"><path d="M6 0v16M1 11l5 7 5-7" stroke="#334155" stroke-width="1.5" fill="none"/></svg>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ OUTPUT -->
+  <div class="layer">
+    <div class="layer-label">Output</div>
+    <div class="layer-body">
+      <div class="output-cols">
+
+        <div class="card output">
+          <div class="card-title">Terminal Notification</div>
+          <div class="detail" style="margin-top:4px">
+            <li>Platform tag (Kalshi USD / Polymarket <span class="tip" data-tip="USDC is a US-dollar stablecoin on the Polygon blockchain. Winning a Polymarket bet means receiving USDC — not direct USD. A cash-out step through a crypto exchange is required. The ⚠ flag is a reminder to account for this.">USDC ⚠</span>)</li>
+            <li>Side, price, <span class="tip" data-tip="Your expected return above the fair price. A 5% edge means for every $100 bet you expect ~$5 more profit than a fair bet would pay.">edge %</span>, <span class="tip" data-tip="Edge scaled to a yearly rate. A 4% edge closing in 30 days annualises to ~49%; the same 4% closing in 300 days is only ~5%. Use this to compare opportunities with different time horizons.">annualised edge %</span>, days to close</li>
+            <li>Suggested position size ($)</li>
+            <li>Top 3 reasons from classifier</li>
+            <li><span class="tip tip-r" data-tip="Flags unusually large trading on the opposite side from the obvious outcome. Always shown when detected — should be read carefully before placing a bet, as it may indicate the consensus price is wrong.">Volume anomaly</span> line (if flagged)</li>
+            <li><span class="tip tip-r" data-tip="Facts found during research that argue against the obvious outcome. Always shown in the notification even when empty, so you can confirm the classifier looked for them.">Contradicting signals</span> — always shown</li>
+            <li><span class="tip tip-r" data-tip="How the platform determines the final outcome and pays out winners. Settlement risk is when the platform might resolve the market differently than the real-world result — due to ambiguous rules or a lagging data source.">Settlement</span> risk + what would change this</li>
+          </div>
+        </div>
+
+        <div class="card output">
+          <div class="card-title">Excel Report <span style="color:#64748b;font-size:10px">excel_reporter.py</span></div>
+          <div class="sheet-list">
+            <div class="sheet green"><strong>Opportunities</strong> — actionable (green) + <span class="tip" data-tip="CERTAIN-classified markets that were filtered out — validation errors, edge below 3%, or already notified within 7 days. Shown in grey so the sheet is never misleadingly empty.">near-misses</span> (grey)</div>
+            <div class="sheet" style="border-color:#7c3aed;color:#ddd6fe"><strong>All Results</strong> — every classified market with routing</div>
+            <div class="sheet yellow"><strong>Legend</strong> — colour key + column definitions</div>
+          </div>
+          <div class="detail" style="margin-top:6px">
+            <li>Columns: ticker (linked to market page), title, category, side, price, confidence, classification, status, validation errors, <span class="tip" data-tip="Expected return above the fair price, expressed as a percentage of capital deployed.">edge</span>, ann. edge, days, size, <span class="tip" data-tip="Total contracts or USD traded. Higher volume = more real money behind the price = more trustworthy probability signal.">volume</span>, anomaly, <span class="tip" data-tip="Facts found during research that argue against the obvious outcome. CERTAIN requires zero of these.">contradicting signals</span>, settlement risk</li>
+            <li>Near-misses = CERTAIN but filtered; shown in grey with failure reason</li>
+            <li>Saved to logs/kalshi_YYYYMMDD_HHMM.xlsx</li>
+          </div>
+        </div>
+
+        <div class="card output">
+          <div class="card-title">Dashboard Log</div>
+          <div class="detail" style="margin-top:4px">
+            <li>All processed markets appended to logs/opportunities.jsonl</li>
+            <li>JSON Lines format — one record per line</li>
+            <li>Includes routing decision, <span class="tip" data-tip="Expected return above the fair price. Logged for every candidate — not just those that pass the 3% notification threshold.">edge</span>, sizing, timestamps</li>
+            <li><span class="tip tip-r" data-tip="Deduplication state — tracks which opportunities were already notified and when. Entries expire after 7 days (TTL = Time-To-Live), after which the same market can trigger a new notification.">Dedup</span> state in cache/notified.json (7-day <span class="tip tip-l" data-tip="Time-To-Live — how long a cache entry stays valid before expiring. A 7-day TTL means a notified opportunity is remembered for 7 days before the dedup suppression lifts.">TTL</span>)</li>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════ GLOSSARY -->
+<details class="glossary">
+  <summary>Glossary — all terms defined</summary>
+  <dl class="glossary-grid">
+
+    <div class="gterm">
+      <dt>Spread (bid-ask spread)</dt>
+      <dd>The gap between the highest price a buyer will pay (bid) and the lowest price a seller will accept (ask). A spread of ≤ 3c means you can enter and exit near the fair price. A wide spread means you lose value just by placing the trade — before the outcome even resolves.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Volume</dt>
+      <dd>Total contracts (Kalshi) or USD (Polymarket) traded in a market. Higher volume means more real money behind the price, making it a more trustworthy probability signal. A market priced at 99c with zero volume is just an illiquid placeholder — nobody has actually bet on it.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Threshold (price)</dt>
+      <dd>The minimum market price for a candidate to be considered. At 85c, the crowd already believes the outcome is ≥85% likely. The deep scan uses 80c to surface more candidates at the cost of more noise and false positives.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Implied Probability</dt>
+      <dd>What the market price implies about the probability of an outcome. A YES price of 87c means the market collectively believes there is an 87% chance the event happens. This is the crowd's estimate, not the truth — and exploiting the gap between market price and true probability is the entire purpose of this pipeline.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Edge</dt>
+      <dd>Your expected return above the fair price. If an outcome is truly 99% likely but the market prices it at 94c, you have roughly 5% edge — for every $100 bet you expect ~$5 more profit than a fair bet would pay. Only positive-edge bets are worth making. A 3% minimum edge is required to trigger a notification.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>EV (Expected Value)</dt>
+      <dd>The average outcome if you made the same bet many times under identical conditions. <code>EV = (P(win) × profit if win) − (P(lose) × loss if lose)</code>. A positive EV means the bet is profitable in expectation — you will make money on average, even if any individual bet can still lose.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Kelly Criterion</dt>
+      <dd>A formula (J.L. Kelly Jr., 1956) that computes the fraction of your bankroll to bet for maximum long-run growth: <code>f = edge × price / net_profit</code>. We cap at 5% of bankroll because full Kelly is mathematically optimal only when your edge estimate is perfect. In practice, estimates have error — betting full Kelly on a bad estimate can cause large losses.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Bankroll</dt>
+      <dd>The total capital set aside specifically for prediction market betting. Kelly sizing uses this number to compute the maximum dollar amount to put on any single bet. Default is $1,000 — adjust in <code>config.yaml</code>. Never use money you cannot afford to lose entirely.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Annualised Edge</dt>
+      <dd>Edge scaled to a yearly rate for fair comparison across different time horizons — the same way banks quote annual interest rates. <code>Annualised = edge × (365 / days_to_close)</code>. A 4% edge closing in 30 days annualises to ~49%; the same 4% closing in 300 days is only ~5%. Shorter bets compound faster.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Fee Rate</dt>
+      <dd>The platform's cut on winnings. Kalshi uses a quadratic model averaging ~1.5%. This reduces your effective edge and is factored into all calculations. A 2% gross edge can turn negative after fees — always check the edge-after-fees figure in the report.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>True Probability</dt>
+      <dd>The classifier LLM's assessment of the real probability of an outcome, expressed as <code>confidence_score ÷ 100</code>. This is distinct from the market price (the crowd's implied probability). The gap between true_prob and market price creates (or eliminates) positive edge.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Settlement</dt>
+      <dd>How the platform determines the final outcome and pays out winners. Settlement risk is when the platform might resolve the market differently than the real-world result — for example, using a specific lagging data source, having ambiguous resolution criteria, or making a discretionary call. Being factually correct is not always enough.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Combo Exclusion</dt>
+      <dd>Multi-leg bets that require several independent outcomes to all win (e.g., Team A AND Team B AND Team C all win today). These show artificially high prices because the platform prices the compound probability. A 90% per-leg probability across 4 legs is only ~66% combined — these are excluded to avoid false signals.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Volume Anomaly</dt>
+      <dd>Unusually large trading on the opposite side from the obvious outcome. Could indicate informed traders ("smart money") who know something the market does not — or routine hedging by people trying to reduce exposure to an existing position. Worth investigating before acting on the "obvious" side.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Smart Money</dt>
+      <dd>Large, informed bets — typically from professional traders, insiders, or people with sophisticated research. When significant capital flows against the obvious outcome in a mid-probability market (20–79c), it signals the market consensus may be wrong. The anomaly scanner exists to surface these signals.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Implied HC $ (High-Confidence Dollars)</dt>
+      <dd>The dollar value implied by the consensus-side bet: <code>volume × price / 100</code>. Measures how much real money is backing the obvious outcome. Filters out markets that only appear certain because nobody has traded them — a $0 implied HC market at 99c is just an empty placeholder.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>CERTAIN / LIKELY / UNCLEAR</dt>
+      <dd>The three classifier output tiers. <strong>CERTAIN</strong> = near-mathematical certainty (≥95% confidence, ≥3 confirming signals, zero contradicting signals) — the only tier that proceeds to opportunity sizing. <strong>LIKELY</strong> = probable but not certain enough to act on. <strong>UNCLEAR</strong> = insufficient evidence to classify.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Confirming Signals</dt>
+      <dd>Facts found during research that support the high-confidence outcome — news articles, official statements, statistical data, each with a source URL. CERTAIN requires ≥3. They are logged and shown in the Excel report so you can verify the classifier's reasoning.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Contradicting Signals</dt>
+      <dd>Facts that argue against the obvious outcome. Even one contradicting signal blocks a CERTAIN classification, forcing downgrade to LIKELY. This design ensures the classifier genuinely searches for counterevidence rather than just building a one-sided case.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Devil's Advocate Pass</dt>
+      <dd>A built-in adversarial step where the LLM is explicitly asked for the strongest argument AGAINST its own CERTAIN conclusion. If it finds substantive counter-arguments, the classification is downgraded to LIKELY and a contradicting signal is added. Combats overconfidence from the initial classification pass.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Dedup / TTL</dt>
+      <dd><strong>Deduplication</strong>: suppressing repeat notifications for the same market. Once flagged, that market+side is suppressed for 7 days even if the scanner runs every 2 hours. <strong>TTL (Time-To-Live)</strong>: how long the suppression lasts. After 7 days the entry expires and the opportunity can trigger a fresh notification if it still qualifies.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>Near-Miss</dt>
+      <dd>A CERTAIN-classified market that was filtered before notification — due to a validation error (e.g., fewer than 3 confirming signals), edge below 3%, or dedup suppression. Shown in grey on the Opportunities sheet so the report is never misleadingly empty, and so you can review what almost qualified.</dd>
+    </div>
+
+    <div class="gterm">
+      <dt>USDC</dt>
+      <dd>USD Coin — a cryptocurrency stablecoin pegged 1:1 to the US dollar, running on the Polygon blockchain. Polymarket payouts arrive in USDC in a crypto wallet, not as direct USD. A separate cash-out step through a crypto exchange (e.g., Coinbase) is required to convert USDC to spendable dollars.</dd>
+    </div>
+
+  </dl>
+</details>
+
+<p style="margin-top:20px;font-size:10px;color:#334155;">
+  Generated May 2026 · kalshi_cron.py entry point · scanner.py · anomaly_scanner.py · polymarket_scanner.py · classifier.py · opportunity_manager.py · excel_reporter.py
+</p>
+
+</body>
+</html>
