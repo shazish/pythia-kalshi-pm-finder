@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="shared.css">
+<title>Backtest — Kalshi/Polymarket Pipeline</title>
+<style>
+  /* ── Flow ── */
+  .flow {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    margin-bottom: 28px;
+  }
+  .flow-step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+  }
+  .flow-card {
+    border-radius: 8px;
+    padding: 13px 14px;
+    font-size: 11px;
+    line-height: 1.5;
+    width: 100%;
+    border: 1px solid #0d9488;
+    background: #021a1a;
+    color: #94a3b8;
+  }
+  .flow-card strong { color: #e2e8f0; font-size: 11px; }
+  .flow-card code {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    background: #1e293b;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #fde68a;
+  }
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    padding-top: 18px;
+    color: #475569;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  /* ── Segment table ── */
+  .seg-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    margin-bottom: 16px;
+  }
+  .seg-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: #111827;
+    border: 1px solid #1e293b;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #64748b;
+    text-transform: uppercase;
+  }
+  .seg-table td {
+    padding: 8px 12px;
+    border: 1px solid #1e293b;
+    color: #94a3b8;
+    vertical-align: top;
+    line-height: 1.5;
+  }
+  .seg-table tr:nth-child(even) td { background: #0b0f18; }
+  .seg-table td:first-child { font-weight: 700; color: #e2e8f0; white-space: nowrap; }
+  .seg-table td code {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    background: #1e293b;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #fde68a;
+  }
+
+  /* ── Precision table ── */
+  .precision-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    margin-bottom: 24px;
+  }
+  .precision-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: #111827;
+    border: 1px solid #1e293b;
+    font-size: 10px;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .precision-table td {
+    padding: 8px 12px;
+    border: 1px solid #1e293b;
+    color: #94a3b8;
+    line-height: 1.5;
+    vertical-align: top;
+  }
+  .precision-table td:first-child { font-weight: 700; color: #e2e8f0; white-space: nowrap; }
+  .precision-table tr.good  td { background: #0a1f0a; }
+  .precision-table tr.warn  td { background: #1a1208; }
+  .precision-table tr.bad   td { background: #1a0600; }
+  .precision-table tr.wait  td { background: #0b0f18; }
+
+  /* ── Files card ── */
+  .files-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .file-card {
+    border-radius: 7px;
+    border: 1px solid #1e293b;
+    background: #111827;
+    padding: 12px 14px;
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+  .file-card-name {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    color: #fde68a;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .file-card li {
+    list-style: none;
+    padding: 2px 0 2px 10px;
+    position: relative;
+    font-size: 10px;
+  }
+  .file-card li::before { content: '›'; position: absolute; left: 0; color: #475569; }
+  .file-card strong { color: #e2e8f0; }
+
+  /* ── Timeline ── */
+  .timeline {
+    border-left: 2px solid #1e293b;
+    padding-left: 20px;
+    margin-left: 10px;
+    margin-bottom: 24px;
+  }
+  .tl-item {
+    position: relative;
+    padding-bottom: 20px;
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+  .tl-item:last-child { padding-bottom: 0; }
+  .tl-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #0d9488;
+    border: 2px solid #0f1117;
+    position: absolute;
+    left: -25px;
+    top: 3px;
+  }
+  .tl-dot.pending { background: #334155; }
+  .tl-dot.future  { background: #1e293b; border-color: #334155; }
+  .tl-date { font-weight: 700; color: #e2e8f0; margin-bottom: 3px; }
+  .tl-item strong { color: #e2e8f0; }
+
+  /* ── Sample output block ── */
+  .sample-output {
+    background: #021a1a;
+    border: 1px solid #0d9488;
+    border-radius: 8px;
+    padding: 14px 16px;
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    color: #94a3b8;
+    overflow-x: auto;
+    margin-bottom: 24px;
+    line-height: 1.7;
+    white-space: pre;
+  }
+  .so-header { color: #5eead4; font-weight: 700; }
+  .so-ok     { color: #4ade80; }
+  .so-warn   { color: #fb923c; }
+  .so-label  { color: #e2e8f0; }
+  .so-dim    { color: #475569; }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="pipeline.html">Pipeline Overview</a>
+  <a href="classifier.html">Classifier Detail</a>
+  <a href="backtest.html" class="active">Backtest</a>
+</nav>
+
+<h1>Backtest — Retrospective Precision Scorer</h1>
+<p class="subtitle">
+  Measures classifier accuracy against actual market resolutions ·
+  target ≥ 95% precision on CERTAIN ·
+  run manually via <code style="background:#1e293b;padding:2px 6px;border-radius:3px;color:#fde68a;font-size:11px">python3 kalshi_cron.py backtest</code>
+</p>
+
+<!-- ══════════════════════════════════════════════════════ OVERVIEW -->
+<div class="section">
+  <h2>What It Measures</h2>
+  <p style="font-size:11px;color:#94a3b8;line-height:1.6;max-width:860px;margin-bottom:16px">
+    The backtest reads every opportunity logged to <code style="background:#1e293b;padding:1px 4px;border-radius:3px;color:#fde68a;font-size:10px">logs/opportunities.jsonl</code>
+    since the pipeline began, queries the Kalshi API for each market's resolution status,
+    and computes what fraction of <strong>CERTAIN</strong>-classified predictions were correct.
+    The target is ≥ 95% precision. Falling below this threshold indicates the classifier is being
+    too aggressive with CERTAIN and the classification prompts need recalibration.
+  </p>
+
+  <div class="callout blue">
+    <strong>Why precision, not accuracy?</strong> In prediction markets we care deeply about
+    <em>false positives</em> — times we were CERTAIN but wrong — because each miss represents money
+    lost on a bet we were confident about. A recall metric (catching every real certainty) matters
+    less than ensuring that the bets we do make are correct. Hence the 95% precision target, not
+    a balanced F1 score.
+  </div>
+
+  <div class="flow">
+    <div class="flow-step">
+      <div class="flow-card">
+        <strong>1. Load log</strong><br>
+        Read <code>logs/opportunities.jsonl</code><br>
+        Each line = one classified market (candidate + classification)<br>
+        <span style="color:#64748b;font-size:10px">178 entries as of May 2026</span>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-card">
+        <strong>2. Check resolutions</strong><br>
+        Query <code>GET /markets/{"{ticker}"}</code> for each pending market<br>
+        Skip if already settled (cached)<br>
+        <span style="color:#64748b;font-size:10px">150ms throttle between requests</span>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-card">
+        <strong>3. Score</strong><br>
+        Compare <code>predicted_side</code> vs <code>result</code><br>
+        Separate CERTAIN and LIKELY pools<br>
+        <span style="color:#64748b;font-size:10px">Only YES/NO results count</span>
+      </div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-step">
+      <div class="flow-card">
+        <strong>4. Segment &amp; report</strong><br>
+        Break down by category, horizon tier, confidence band<br>
+        Save JSON + print terminal report<br>
+        <span style="color:#64748b;font-size:10px">Output: <code>backtests/backtest_YYYYMMDD.json</code></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ RESOLUTION CHECKING -->
+<div class="section">
+  <h2>Resolution Checking</h2>
+
+  <p style="font-size:11px;color:#94a3b8;line-height:1.6;max-width:860px;margin-bottom:16px">
+    Each entry in <code style="background:#1e293b;padding:1px 4px;border-radius:3px;color:#fde68a;font-size:10px">opportunities.jsonl</code>
+    has a <code style="background:#1e293b;padding:1px 4px;border-radius:3px;color:#fde68a;font-size:10px">candidate.ticker</code>.
+    The backtest calls <code style="background:#1e293b;padding:1px 4px;border-radius:3px;color:#fde68a;font-size:10px">KalshiClient.get_market(ticker)</code>
+    and checks the <code>status</code> and <code>result</code> fields.
+  </p>
+
+  <table class="seg-table" style="margin-bottom:16px">
+    <thead>
+      <tr>
+        <th>API Field</th>
+        <th>Values</th>
+        <th>Backtest treatment</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>status</td>
+        <td><code>"open"</code> / <code>"closed"</code> / <code>"settled"</code> / <code>"finalized"</code></td>
+        <td>Only <code>settled</code> or <code>finalized</code> markets are scored. Others stay as "pending" in the cache and are re-checked on the next backtest run.</td>
+      </tr>
+      <tr>
+        <td>result</td>
+        <td><code>"YES"</code> / <code>"NO"</code> / <code>""</code></td>
+        <td>Empty result = market settled without a binary outcome (voided, cancelled). These are excluded from precision scoring but counted separately.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout teal">
+    Results are <strong>cached</strong> in <code>backtests/resolution_cache.json</code>. Once a market status is <code>settled</code> or <code>finalized</code>, it is never re-queried — the cache entry is permanent. Pending markets are re-queried each backtest run at 150ms/request. A market with <code>status: "error"</code> in the cache had an API failure and is excluded from scoring.
+  </div>
+
+  <pre><span class="c">// resolution_cache.json — example entries</span>
+{
+  <span class="n">"KXIPODATABRICKS-JUN"</span>: {
+    <span class="n">"status"</span>:     <span class="s">"settled"</span>,
+    <span class="n">"result"</span>:     <span class="s">"NO"</span>,
+    <span class="n">"checked_at"</span>: <span class="s">"2026-07-01T12:04:00Z"</span>
+  },
+  <span class="n">"KXCANDID-2026"</span>: {
+    <span class="n">"status"</span>:     <span class="s">"open"</span>,
+    <span class="n">"result"</span>:     <span class="s">""</span>,
+    <span class="n">"checked_at"</span>: <span class="s">"2026-05-17T08:00:00Z"</span>
+  }
+}</pre>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ SCORING -->
+<div class="section">
+  <h2>Scoring Formula</h2>
+  <p style="font-size:11px;color:#94a3b8;line-height:1.6;max-width:860px;margin-bottom:16px">
+    Scoring is simple binary: did the predicted side match the actual result?
+    No partial credit, no probability weighting.
+  </p>
+
+  <pre><span class="c"># Core scoring logic (simplified from backtest.py)</span>
+
+<span class="k">for</span> entry, resolution <span class="k">in</span> resolved:
+    clf = entry[<span class="s">"classification"</span>]
+    predicted_side = clf[<span class="s">"high_confidence_side"</span>].upper()   <span class="c"># "YES" or "NO"</span>
+    actual_result  = resolution[<span class="s">"result"</span>].upper()            <span class="c"># "YES" or "NO"</span>
+    correct = (predicted_side == actual_result) <span class="k">and</span> (actual_result <span class="k">in</span> (<span class="s">"YES"</span>, <span class="s">"NO"</span>))
+
+<span class="c"># Precision = correct / total (for CERTAIN pool)</span>
+precision = certain_correct / certain_total  <span class="c"># target: >= 0.95</span></pre>
+
+  <div class="callout amber">
+    <strong>Minimum sample requirement:</strong> precision is only considered meaningful at ≥ 10 resolved CERTAIN markets.
+    Below that threshold, the report prints the raw counts but does not flag whether the target is met.
+    The <code>meets_target</code> field in the JSON output is <code>false</code> until both conditions are met.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ SEGMENTATION -->
+<div class="section">
+  <h2>Segmentation — Breakdowns</h2>
+  <p style="font-size:11px;color:#94a3b8;line-height:1.6;max-width:860px;margin-bottom:16px">
+    Every resolved market is recorded in up to 4 segments, allowing drill-down when overall precision is weak.
+    Only segments with ≥ 3 resolved markets are shown in the terminal report (noise suppression).
+  </p>
+
+  <table class="seg-table">
+    <thead>
+      <tr>
+        <th>Segment key format</th>
+        <th>Dimension</th>
+        <th>Purpose</th>
+        <th>Example values</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>CERTAIN|category:X</code></td>
+        <td>Market category</td>
+        <td>Find whether the classifier is over-confident in a specific domain (e.g., IPO markets are harder than political markets)</td>
+        <td><code>Politics</code> <code>Business</code> <code>Sports</code> <code>Economics</code> <code>Crypto</code></td>
+      </tr>
+      <tr>
+        <td><code>CERTAIN|horizon:X</code></td>
+        <td>Days to close at classification time</td>
+        <td>Find whether far-horizon markets are being mis-classified; expect lower precision in <code>31-90d</code> and <code>91-365d</code> buckets</td>
+        <td><code>&lt;=7d</code> <code>8-30d</code> <code>31-90d</code> <code>91-365d</code> <code>&gt;365d</code></td>
+      </tr>
+      <tr>
+        <td><code>CERTAIN|confidence:X</code></td>
+        <td>Classifier confidence score</td>
+        <td>Verify that higher confidence_score actually correlates with higher accuracy; if <code>98-100</code> and <code>95-97</code> have similar precision, the score is poorly calibrated</td>
+        <td><code>98-100</code> <code>95-97</code> <code>90-94</code> <code>&lt;90</code></td>
+      </tr>
+      <tr>
+        <td><code>LIKELY|category:X</code></td>
+        <td>LIKELY classification by category</td>
+        <td>LIKELY precision is informational only — it is not a target metric. But consistent precision well above 50% in LIKELY may suggest the threshold between LIKELY and CERTAIN could be lowered in some domains.</td>
+        <td>Same as CERTAIN|category</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ INTERPRETING OUTPUT -->
+<div class="section">
+  <h2>Interpreting the Report</h2>
+
+  <div class="sample-output"><span class="so-header">══════════════════════════════════════════════════════════════
+BACKTEST REPORT — Retrospective Classifier Precision
+══════════════════════════════════════════════════════════════</span>
+<span class="so-label">Resolved:  </span>47
+<span class="so-label">Pending:   </span>131
+<span class="so-label">Errors:    </span>0
+
+<span class="so-ok">CERTAIN:  45/47  precision=95.7%  [OK]</span>
+<span class="so-label">  Misses (2):</span>
+<span class="so-dim">    KXIPODATABRICKS-JUN: predicted NO, actual YES  (conf=96)</span>
+<span class="so-dim">      Will Databricks IPO by June 2026?</span>
+<span class="so-dim">    KXPRESUS2024-HARRIS: predicted YES, actual NO  (conf=95)</span>
+<span class="so-dim">      Will Harris win the presidency?</span>
+
+<span class="so-label">LIKELY:   </span>28/38  precision=73.7%
+
+<span class="so-label">Segment breakdown (>=3 resolved):</span>
+<span class="so-ok">  CERTAIN|category:Politics            45/47  95.7%</span>
+<span class="so-ok">  CERTAIN|confidence:98-100            22/23  95.7%</span>
+<span class="so-warn">  CERTAIN|confidence:95-97             23/24  95.8%</span>
+<span class="so-warn">  CERTAIN|horizon:8-30d                18/20  90.0%</span>
+<span class="so-ok">  CERTAIN|horizon:&lt;=7d                 22/22 100.0%</span>
+<span class="so-dim">══════════════════════════════════════════════════════════════</span></div>
+
+  <table class="precision-table">
+    <thead>
+      <tr>
+        <th>What you see</th>
+        <th>What it means</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="good">
+        <td>CERTAIN ≥ 95% with n ≥ 10</td>
+        <td>Classifier is well-calibrated. CERTAIN classifications are trustworthy.</td>
+        <td>No action needed. Continue monitoring as sample grows.</td>
+      </tr>
+      <tr class="warn">
+        <td>CERTAIN 90–94%, n ≥ 10</td>
+        <td>Slightly below target. One or two segments are dragging the overall number.</td>
+        <td>Check which horizon or category segment is underperforming. Tighten that specific domain in the classifier prompt's TTR section.</td>
+      </tr>
+      <tr class="bad">
+        <td>CERTAIN &lt; 90%, n ≥ 10</td>
+        <td>Classifier is over-confident. Too many CERTAIN calls are wrong.</td>
+        <td>Review miss list. Raise confidence threshold in <code>validate_classification()</code> (currently 95 → consider 97). Add domain-specific language to the TTR notes. Do a devil's advocate pass audit.</td>
+      </tr>
+      <tr class="wait">
+        <td>n &lt; 10 resolved markets</td>
+        <td>Insufficient data. Report prints counts but does not flag target.</td>
+        <td>Wait for more markets to settle. First batch expected ~June 2026 (IPO-by-June markets).</td>
+      </tr>
+      <tr class="warn">
+        <td>LIKELY precision near 50%</td>
+        <td>LIKELY is essentially random — which is acceptable. It means the classifier correctly refrained from CERTAIN on genuinely uncertain markets.</td>
+        <td>No action. LIKELY is not a betting signal, only a tracking signal.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ FILES -->
+<div class="section">
+  <h2>Files</h2>
+  <div class="files-grid">
+
+    <div class="file-card">
+      <div class="file-card-name">logs/opportunities.jsonl</div>
+      <ul>
+        <li><strong>Input</strong> to the backtest</li>
+        <li>Appended by <code>finalize</code> mode after every scan cycle</li>
+        <li>One JSON record per line</li>
+        <li>Each record: <code>{"{candidate: {...}, classification: {...}, routing: ..., logged_at: ...}"}</code></li>
+        <li>Grows over time — never truncated</li>
+      </ul>
+    </div>
+
+    <div class="file-card">
+      <div class="file-card-name">backtests/resolution_cache.json</div>
+      <ul>
+        <li>Caches API resolution results to avoid re-querying</li>
+        <li>Keyed by ticker; values: <code>{"{status, result, checked_at}"}</code></li>
+        <li>Settled entries are permanent — never re-queried</li>
+        <li>Pending entries are re-checked on every backtest run</li>
+        <li>Safe to delete to force a full re-query (costs API calls)</li>
+      </ul>
+    </div>
+
+    <div class="file-card">
+      <div class="file-card-name">backtests/backtest_YYYYMMDD_HHMMSS.json</div>
+      <ul>
+        <li>Output — one file per backtest run</li>
+        <li>Contains: <code>sample_size</code>, <code>pending</code>, <code>certain{"{...}"}</code>, <code>likely{"{...}"}</code>, <code>segments{"{...}"}</code></li>
+        <li>The <code>certain.misses</code> list has the full miss records</li>
+        <li><code>certain.meets_target</code>: boolean — true if n≥10 AND precision≥0.95</li>
+        <li>Old results are not deleted; accumulate for trend analysis</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ TIMELINE -->
+<div class="section">
+  <h2>When to Expect Results</h2>
+  <p style="font-size:11px;color:#94a3b8;line-height:1.6;max-width:860px;margin-bottom:16px">
+    The pipeline started logging opportunities on May 15, 2026.
+    Most classified markets have long horizons (close dates in late 2026 or 2027).
+    Resolution data will accumulate gradually.
+  </p>
+
+  <div class="timeline">
+    <div class="tl-item">
+      <div class="tl-dot"></div>
+      <div class="tl-date">May 15, 2026 — Pipeline launched</div>
+      178 markets logged to opportunities.jsonl. No resolved markets yet.
+    </div>
+    <div class="tl-item">
+      <div class="tl-dot pending"></div>
+      <div class="tl-date">June 2026 — First expected resolutions</div>
+      "IPO by June 2026" markets begin settling. Expect 10–30 resolved CERTAIN markets.
+      First meaningful precision measurement possible if ≥10 CERTAIN markets settle.
+    </div>
+    <div class="tl-item">
+      <div class="tl-dot future"></div>
+      <div class="tl-date">Q3–Q4 2026 — Growing sample</div>
+      Monthly economic indicator markets, mid-year political and sports markets settle.
+      Segment breakdowns become statistically useful (≥3 per segment).
+    </div>
+    <div class="tl-item">
+      <div class="tl-dot future"></div>
+      <div class="tl-date">2027+ — Full retrospective</div>
+      Year-end markets settle. Long-horizon IPO, political, and macro markets resolve.
+      Enough data for confidence band and horizon tier analysis to be reliable.
+    </div>
+  </div>
+
+  <div class="callout teal">
+    <strong>Running early:</strong> running <code>python3 kalshi_cron.py backtest</code> before any markets settle is safe — it prints "No resolved markets yet" and exits cleanly. It still caches the current API status for all 178 pending markets, which speeds up future runs.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ HOW TO RUN -->
+<div class="section">
+  <h2>How to Run</h2>
+
+  <h3>Manual run</h3>
+  <pre><span class="c"># Via cron entry point (recommended)</span>
+python3 kalshi_cron.py backtest
+
+<span class="c"># Directly</span>
+cd ~/.hermes/kalshi-tracker
+python3 backtest.py</pre>
+
+  <h3>Output files</h3>
+  <pre><span class="c"># Terminal: human-readable report</span>
+<span class="c"># backtests/backtest_20260601_120000.json: full metrics for programmatic use</span>
+<span class="c"># backtests/resolution_cache.json: updated with any newly settled markets</span></pre>
+
+  <h3>Periodic backtest via cron</h3>
+  <p style="font-size:11px;color:#94a3b8;line-height:1.6;max-width:860px;margin-bottom:10px">
+    Add a weekly backtest job by editing <code>cron/jobs.json</code>. Example entry to run every Sunday at 08:00:
+  </p>
+  <pre>{
+  <span class="n">"id"</span>: <span class="s">"kalshi-backtest-weekly"</span>,
+  <span class="n">"cron"</span>: <span class="s">"0 8 * * 0"</span>,
+  <span class="n">"description"</span>: <span class="s">"Weekly classifier precision backtest"</span>,
+  <span class="n">"command"</span>: <span class="s">"python3 ~/.hermes/kalshi-tracker/kalshi_cron.py backtest"</span>
+}</pre>
+
+  <div class="callout amber">
+    <strong>Polymarket backtest:</strong> not yet implemented. The backtest only scores Kalshi markets.
+    Polymarket entries in <code>opportunities.jsonl</code> are identified by <code>platform == "Polymarket"</code>
+    and skipped with <code>status: "unsupported"</code>. Implementing Polymarket resolution requires
+    querying the Gamma API's CLOB endpoint for market results.
+  </div>
+</div>
+
+<p style="margin-top:20px;font-size:10px;color:#334155;">
+  backtest.py · kalshi_client.py · logs/opportunities.jsonl · backtests/ · Updated May 2026
+</p>
+
+</body>
+</html>

@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="shared.css">
+<title>Classifier Detail — Kalshi/Polymarket Pipeline</title>
+<style>
+  /* ── Two-mode side by side ── */
+  .mode-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .mode-card {
+    border-radius: 8px;
+    border: 1px solid #334155;
+    background: #111827;
+    padding: 16px 18px;
+  }
+  .mode-card.anomaly {
+    border-color: #b45309;
+    background: #1a1208;
+  }
+  .mode-card-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #e2e8f0;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mode-card ul {
+    list-style: none;
+    padding: 0;
+  }
+  .mode-card li {
+    font-size: 11px;
+    color: #94a3b8;
+    padding: 3px 0 3px 12px;
+    position: relative;
+    line-height: 1.5;
+  }
+  .mode-card li::before { content: '›'; position: absolute; left: 0; color: #475569; }
+  .mode-card li strong { color: #e2e8f0; }
+
+  /* ── Search requirement box ── */
+  .search-box {
+    border: 1px solid #0d9488;
+    background: #021a1a;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 24px;
+  }
+  .search-box-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #5eead4;
+    letter-spacing: 0.4px;
+    margin-bottom: 10px;
+  }
+  .search-req {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    padding: 6px 0;
+    border-top: 1px solid #0d948822;
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+  .search-req:first-of-type { border-top: none; }
+  .search-num {
+    font-size: 10px;
+    font-weight: 700;
+    color: #0d9488;
+    background: #021a1a;
+    border: 1px solid #0d9488;
+    border-radius: 3px;
+    padding: 1px 5px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .search-req strong { color: #e2e8f0; }
+  .search-req em { color: #5eead4; font-style: normal; }
+
+  /* ── Output schema table ── */
+  .schema-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    margin-bottom: 24px;
+  }
+  .schema-table th {
+    text-align: left;
+    padding: 8px 10px;
+    background: #111827;
+    border: 1px solid #1e293b;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #64748b;
+    text-transform: uppercase;
+  }
+  .schema-table td {
+    padding: 7px 10px;
+    border: 1px solid #1e293b;
+    color: #94a3b8;
+    vertical-align: top;
+    line-height: 1.5;
+  }
+  .schema-table tr:nth-child(even) td { background: #0b0f18; }
+  .schema-table td:first-child {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    color: #fde68a;
+    font-size: 10px;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .schema-table td:nth-child(2) {
+    color: #7c3aed;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .schema-table td strong { color: #e2e8f0; }
+  .schema-table td code {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    background: #1e293b;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #fde68a;
+  }
+  .req-badge {
+    display: inline-block;
+    font-size: 8px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 2px;
+    letter-spacing: 0.3px;
+    vertical-align: middle;
+  }
+  .req-certain { background: #7c3aed; color: #ddd6fe; }
+  .req-all     { background: #334155; color: #e2e8f0; }
+
+  /* ── Validation rules ── */
+  .validation-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .val-card {
+    border-radius: 7px;
+    padding: 12px 14px;
+    border: 1px solid;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .val-certain  { background: #1c1230; border-color: #7c3aed; }
+  .val-any      { background: #111827; border-color: #334155; }
+  .val-auto     { background: #1a0800; border-color: #b45309; }
+  .val-card-title {
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    margin-bottom: 7px;
+  }
+  .val-certain .val-card-title { color: #c4b5fd; }
+  .val-any     .val-card-title { color: #94a3b8; }
+  .val-auto    .val-card-title { color: #fcd34d; }
+  .val-card ul { list-style: none; padding: 0; }
+  .val-card li { color: #94a3b8; padding: 2px 0 2px 12px; position: relative; }
+  .val-card li::before { content: '✓'; position: absolute; left: 0; color: #475569; font-size: 9px; top: 3px; }
+  .val-card li code {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    background: #1e293b;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #fde68a;
+  }
+
+  /* ── TTR table ── */
+  .ttr-section { margin-bottom: 32px; }
+  .ttr-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    margin-bottom: 16px;
+  }
+  .ttr-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: #111827;
+    border: 1px solid #1e293b;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: #64748b;
+    text-transform: uppercase;
+  }
+  .ttr-table td {
+    padding: 8px 12px;
+    border: 1px solid #1e293b;
+    color: #94a3b8;
+    vertical-align: top;
+    line-height: 1.5;
+  }
+  .ttr-table td:first-child {
+    font-weight: 700;
+    color: #e2e8f0;
+    white-space: nowrap;
+  }
+  .ttr-table td:nth-child(2) {
+    text-align: center;
+    font-size: 16px;
+  }
+  .ttr-table tr.t-easy td { background: #0c2340; }
+  .ttr-table tr.t-std  td { background: #111827; }
+  .ttr-table tr.t-hard td { background: #1a0f00; }
+  .ttr-table tr.t-vhard td { background: #1a0800; }
+  .ttr-table tr.t-never td { background: #140009; }
+
+  .cat-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .cat-card {
+    border-radius: 7px;
+    border: 1px solid #1e293b;
+    background: #111827;
+    padding: 13px 15px;
+  }
+  .cat-card-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #e2e8f0;
+    margin-bottom: 8px;
+  }
+  .cat-card ul { list-style: none; padding: 0; }
+  .cat-card li {
+    font-size: 11px;
+    color: #94a3b8;
+    padding: 3px 0 3px 12px;
+    position: relative;
+    line-height: 1.5;
+  }
+  .cat-card li::before { content: '›'; position: absolute; left: 0; color: #475569; }
+  .cat-card li strong { color: #e2e8f0; }
+
+  /* ── Flow diagram for prompt sequence ── */
+  .prompt-flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+  .pf-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 10px 16px;
+    border-top: 1px solid #1e293b;
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.5;
+  }
+  .pf-step:first-child { border-top: none; }
+  .pf-num {
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .pf-num.search { background: #0c2340; color: #60a5fa; border: 1px solid #1d4ed8; }
+  .pf-num.think  { background: #1c1230; color: #c4b5fd; border: 1px solid #7c3aed; }
+  .pf-num.output { background: #1a0c00; color: #fcd34d; border: 1px solid #b45309; }
+  .pf-step strong { color: #e2e8f0; }
+  .pf-step code {
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    font-size: 10px;
+    background: #1e293b;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #fde68a;
+  }
+  .pf-step.mandatory { background: #021a1a; }
+  .pf-step.mandatory .pf-num.search { background: #021a1a; border-color: #0d9488; color: #5eead4; }
+
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="pipeline.html">Pipeline Overview</a>
+  <a href="classifier.html" class="active">Classifier Detail</a>
+  <a href="backtest.html">Backtest</a>
+</nav>
+
+<h1>Classifier — Full Reference</h1>
+<p class="subtitle">
+  How the LLM agent classifies candidates · search requirements · output schema · validation rules · time-to-resolution tiers
+</p>
+
+<!-- ══════════════════════════════════════════════════════ TWO MODES -->
+<div class="section">
+  <h2>Two Classifier Modes</h2>
+  <div class="mode-grid">
+
+    <div class="mode-card">
+      <div class="mode-card-title">
+        Regular (Price-Filter) <span class="badge badge-file">build_regular_prompt()</span>
+      </div>
+      <ul>
+        <li><strong>Input:</strong> candidates from ScannerAgent — markets already priced ≥80–85c by the crowd</li>
+        <li><strong>Question asked:</strong> "Is the apparently-obvious outcome actually near-certain?"</li>
+        <li><strong>Used by:</strong> <code>incremental</code>, <code>full</code>, <code>deep</code>, <code>pm-*</code> scan modes</li>
+        <li>Classifier prompt includes: ticker, prices, volume, urgency score, close date, settlement rules, and any <span class="tip" data-tip="A flag raised when significant capital is deployed on the low-probability (opposite) side — suggesting someone may know something the crowd doesn't.">volume anomaly</span></li>
+        <li>Default assumption: the high-priced side is likely correct; look for reasons it isn't</li>
+      </ul>
+    </div>
+
+    <div class="mode-card anomaly">
+      <div class="mode-card-title">
+        Anomaly (Volume-First) <span class="badge badge-quant">build_anomaly_prompt()</span>
+      </div>
+      <ul>
+        <li><strong>Input:</strong> candidates from AnomalyScanner — markets at 20–79c with unusual HC capital ≥$10k</li>
+        <li><strong>Question asked:</strong> "Is the smart money right — is the market mispriced?"</li>
+        <li><strong>Used by:</strong> <code>anomaly</code> and <code>pm-anomaly</code> scan modes</li>
+        <li>Classifier prompt includes: implied HC dollars vs opposite dollars, HC-to-opposite ratio, settlement rules</li>
+        <li>Default assumption: price is below certainty threshold for a reason — look for what the smart money knows</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <div class="callout purple">
+    Both modes share the <strong>same output schema</strong> and the same <code>validate_classification()</code> rules, so the Opportunity Manager handles them identically downstream. The difference is only in what question the agent is asked and what context appears in the candidate prompt.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ SEARCH REQUIREMENTS -->
+<div class="section">
+  <h2>Mandatory Search Sequence</h2>
+  <p style="font-size:11px;color:#64748b;margin-bottom:14px">
+    Minimum 3 searches required. The recency search is hardcoded mandatory — skipping it causes automatic downgrade to LIKELY.
+  </p>
+
+  <div class="search-box">
+    <div class="search-box-title">Regular (Price-Filter) classifier search sequence</div>
+    <div class="search-req">
+      <span class="search-num">A</span>
+      <div><strong>Current real-world status</strong> — What is the ground truth right now? Is the event underway, concluded, or still pending? Official sources preferred.</div>
+    </div>
+    <div class="search-req mandatory">
+      <span class="search-num" style="border-color:#0d9488;color:#5eead4">B</span>
+      <div>
+        <strong>Recency search</strong> <em>(MANDATORY — cannot skip)</em><br>
+        Query: <code>"[topic] news [current month year]"</code> or <code>"[topic] update [current month]"</code><br>
+        Catches late-breaking developments that could invalidate an apparently obvious outcome. Missing this forces LIKELY regardless of confidence.
+      </div>
+    </div>
+    <div class="search-req">
+      <span class="search-num">C+</span>
+      <div><strong>Settlement criteria</strong> — How exactly will Kalshi resolve this market? The settlement source URL and rules_primary text are provided. Verify that the real-world outcome cleanly maps to the settlement rule — mismatches are a contradicting signal.</div>
+    </div>
+    <div class="search-req">
+      <span class="search-num">D</span>
+      <div><strong>Volume anomaly (if flagged)</strong> — If the candidate includes a VOLUME ANOMALY block, there is a mandatory additional search: why might someone have large conviction on the opposite (low-probability) side? Unexplained anomalous volume must be listed as a contradicting signal if no explanation is found.</div>
+    </div>
+  </div>
+
+  <div class="search-box" style="border-color:#b45309;background:#1a0c00;">
+    <div class="search-box-title" style="color:#fcd34d">Anomaly classifier search sequence</div>
+    <div class="search-req">
+      <span class="search-num" style="border-color:#b45309;color:#fcd34d">A</span>
+      <div><strong>Ground truth status</strong> — What is the current real-world status of this event? Is the outcome already determined or still open?</div>
+    </div>
+    <div class="search-req">
+      <span class="search-num" style="border-color:#0d9488;color:#5eead4">B</span>
+      <div><strong>Recency search</strong> <em>(MANDATORY)</em> — Volume often front-runs public news. Search for recent announcements, policy decisions, or catalysts that could explain why large capital is already positioned on the high-confidence side.</div>
+    </div>
+    <div class="search-req">
+      <span class="search-num" style="border-color:#b45309;color:#fcd34d">C+</span>
+      <div><strong>Smart money rationale</strong> — Why would sophisticated players put $10k+ on a 20–79c outcome? Could the volume be hedging, market-making, or a known public event (which weakens the signal)? Or is there information asymmetry at play?</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ OUTPUT SCHEMA -->
+<div class="section">
+  <h2>Output Schema — All Fields</h2>
+  <p style="font-size:11px;color:#64748b;margin-bottom:14px">
+    The agent must output exactly this JSON structure. No additional fields, no markdown wrapping.
+    <code style="background:#1e293b;padding:2px 6px;border-radius:3px;color:#fde68a;font-size:10px">validate_classification()</code>
+    enforces the rules post-output.
+  </p>
+
+  <table class="schema-table">
+    <thead>
+      <tr>
+        <th>Field</th>
+        <th>Type</th>
+        <th>Description &amp; Requirements</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>classification</td>
+        <td>string</td>
+        <td>
+          <span class="req-badge req-all">ALL</span>&nbsp;
+          One of <code>"CERTAIN"</code> <code>"LIKELY"</code> <code>"UNCLEAR"</code>.
+          Only <strong>CERTAIN</strong> classifications proceed to the Opportunity Manager.
+          LIKELY and UNCLEAR are logged but not acted on.
+        </td>
+      </tr>
+      <tr>
+        <td>confidence_score</td>
+        <td>number (0–100)</td>
+        <td>
+          <span class="req-badge req-certain">CERTAIN</span>&nbsp;
+          The agent's numeric certainty. <strong>Must be ≥ 95 for CERTAIN</strong>.
+          Used downstream for <span class="tip" data-tip="Edge × (365 / days_to_close) — annualises the edge to allow fair comparison across different time horizons.">annualised edge</span> calculation and backtest confidence bands.
+        </td>
+      </tr>
+      <tr>
+        <td>high_confidence_side</td>
+        <td>string</td>
+        <td>
+          <span class="req-badge req-all">ALL</span>&nbsp;
+          <code>"YES"</code> or <code>"NO"</code> — which side the agent is confident will win.
+          Used by the backtest to compare against the actual settlement result.
+        </td>
+      </tr>
+      <tr>
+        <td>reasons</td>
+        <td>array of strings</td>
+        <td>
+          <span class="req-badge req-certain">CERTAIN</span>&nbsp;
+          Plain-language justifications. <strong>CERTAIN requires ≥ 3 reasons.</strong>
+          Top 3 are shown in the terminal notification. Should be distinct — not restatements of each other.
+        </td>
+      </tr>
+      <tr>
+        <td>confirming_signals</td>
+        <td>array of objects</td>
+        <td>
+          <span class="req-badge req-certain">CERTAIN</span>&nbsp;
+          Facts found during research that support the high-confidence outcome.
+          Each object: <code>{"{"}"fact": "...", "source_url": "..."{"}"}</code>.
+          <strong>CERTAIN requires ≥ 3</strong>. Source URLs are required — "no URL" should not exist for CERTAIN.
+        </td>
+      </tr>
+      <tr>
+        <td>contradicting_signals</td>
+        <td>array of objects</td>
+        <td>
+          <span class="req-badge req-certain">CERTAIN</span>&nbsp;
+          Facts that argue against the obvious outcome.
+          Same format as confirming_signals.
+          <strong>CERTAIN requires exactly 0</strong> — any contradicting signal auto-triggers downgrade to LIKELY.
+          Cluster pricing inconsistencies and unexplained volume anomalies also count here.
+        </td>
+      </tr>
+      <tr>
+        <td>what_would_change_this</td>
+        <td>string</td>
+        <td>
+          <span class="req-badge req-all">ALL</span>&nbsp;
+          Required for all classifications. The specific scenario or evidence that would flip the outcome.
+          Empty string fails validation. Forces the agent to articulate its falsifiability conditions.
+          Shown in the terminal notification under "What would change this".
+        </td>
+      </tr>
+      <tr>
+        <td>settlement_risk</td>
+        <td>string</td>
+        <td>
+          Any scenario where the platform might resolve differently than the real-world outcome —
+          e.g., ambiguous settlement rules, jurisdiction-dependent definitions, timing edge cases.
+          Empty string is acceptable if no settlement risk exists.
+          Shown in the terminal notification.
+        </td>
+      </tr>
+      <tr>
+        <td>recent_developments</td>
+        <td>string</td>
+        <td>
+          <span class="req-badge req-certain">CERTAIN</span>&nbsp;
+          The findings from the mandatory recency search.
+          <strong>Must be non-empty for CERTAIN</strong> — "None found" only if the search genuinely returned nothing.
+          Empty = auto-downgrade to LIKELY (recency search was skipped).
+          Window controlled by <code>KALSHI_RECENCY_DAYS</code> env var (default: 14 days).
+        </td>
+      </tr>
+      <tr>
+        <td>searched_for</td>
+        <td>array of strings</td>
+        <td>
+          <span class="req-badge req-all">ALL</span>&nbsp;
+          List of actual queries performed. <strong>All classifications require ≥ 3</strong>.
+          The recency query (Search B) must appear here.
+          Used to audit whether the agent actually searched before classifying.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <pre><span class="c">// Example CERTAIN output (all fields populated)</span>
+{
+  <span class="n">"classification"</span>: <span class="s">"CERTAIN"</span>,
+  <span class="n">"confidence_score"</span>: 98,
+  <span class="n">"high_confidence_side"</span>: <span class="s">"YES"</span>,
+  <span class="n">"reasons"</span>: [
+    <span class="s">"Company announced IPO withdrawal on May 3rd per SEC filing"</span>,
+    <span class="s">"Lead underwriter Goldman Sachs confirmed no deal in 2025"</span>,
+    <span class="s">"Market closes June 30 — no IPO path exists in 44 days"</span>
+  ],
+  <span class="n">"confirming_signals"</span>: [
+    {<span class="n">"fact"</span>: <span class="s">"SEC Form S-1 withdrawal filed 2025-05-03"</span>, <span class="n">"source_url"</span>: <span class="s">"https://sec.gov/..."</span>},
+    {<span class="n">"fact"</span>: <span class="s">"Goldman Sachs statement: no 2025 deal"</span>,   <span class="n">"source_url"</span>: <span class="s">"https://wsj.com/..."</span>},
+    {<span class="n">"fact"</span>: <span class="s">"No roadshow or lockup filing as of May 2026"</span>, <span class="n">"source_url"</span>: <span class="s">"https://..."</span>}
+  ],
+  <span class="n">"contradicting_signals"</span>: [],
+  <span class="n">"what_would_change_this"</span>: <span class="s">"Surprise S-1 refiling with an accelerated closing under 44 days"</span>,
+  <span class="n">"settlement_risk"</span>: <span class="s">""</span>,
+  <span class="n">"recent_developments"</span>: <span class="s">"No new IPO news found in the past 14 days"</span>,
+  <span class="n">"searched_for"</span>: [
+    <span class="s">"[Company] IPO status 2025"</span>,
+    <span class="s">"[Company] IPO news May 2026"</span>,
+    <span class="s">"Kalshi [ticker] settlement criteria"</span>
+  ]
+}</pre>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ VALIDATION RULES -->
+<div class="section">
+  <h2>Validation Rules — <code style="font-size:12px;color:#fde68a">validate_classification()</code></h2>
+  <p style="font-size:11px;color:#64748b;margin-bottom:14px">
+    Applied in <code>kalshi_cron.py finalize</code> before the opportunity manager processes results.
+    Violations auto-downgrade to LIKELY and are recorded in <code>_validation_errors</code>.
+  </p>
+
+  <div class="validation-grid">
+    <div class="val-card val-certain">
+      <div class="val-card-title">CERTAIN — required conditions</div>
+      <ul>
+        <li><code>confidence_score</code> ≥ 95</li>
+        <li><code>len(reasons)</code> ≥ 3</li>
+        <li><code>len(confirming_signals)</code> ≥ 3</li>
+        <li><code>len(contradicting_signals)</code> == 0</li>
+        <li><code>recent_developments</code> is non-empty</li>
+      </ul>
+    </div>
+
+    <div class="val-card val-any">
+      <div class="val-card-title">All classifications — always required</div>
+      <ul>
+        <li><code>what_would_change_this</code> is non-empty</li>
+        <li><code>len(searched_for)</code> ≥ 3</li>
+        <li><code>confidence_score</code> is numeric (int or float)</li>
+        <li><code>reasons</code> is a list</li>
+        <li><code>confirming_signals</code> is a list</li>
+        <li><code>contradicting_signals</code> is a list</li>
+        <li><code>searched_for</code> is a list</li>
+      </ul>
+    </div>
+
+    <div class="val-card val-auto">
+      <div class="val-card-title">Auto-downgrade triggers (CERTAIN → LIKELY)</div>
+      <ul>
+        <li>Any <code>contradicting_signals</code> entry</li>
+        <li>Empty <code>recent_developments</code></li>
+        <li><code>confidence_score</code> &lt; 95</li>
+        <li>Fewer than 3 reasons or confirming signals</li>
+        <li>Non-numeric <code>confidence_score</code> → set to 0</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="callout amber">
+    <strong>Devil's Advocate pass</strong> (post-classification): for each CERTAIN result, the agent runs a second check asking for the strongest counter-argument. If a coherent argument (2+ substantive sentences with real-world grounding) can be constructed, the classification is downgraded to LIKELY, the argument is added as a <code>contradicting_signal</code>, and the confidence score is lowered. This happens <em>before</em> the JSON is written to <code>classified.json</code>.
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ TTR -->
+<div class="section ttr-section" id="ttr">
+  <h2>Time-to-Resolution Factor <span class="badge badge-new">new</span></h2>
+  <p style="font-size:11px;color:#64748b;margin-bottom:14px">
+    The <code>DAYS TO CLOSE</code> field from the candidate prompt is used to calibrate how strictly CERTAIN is applied.
+    Near-term markets have limited surface area for surprises; far-horizon markets carry compounding black-swan risk.
+    This is a soft constraint — it guides the agent's reasoning but is not enforced by <code>validate_classification()</code>.
+  </p>
+
+  <table class="ttr-table">
+    <thead>
+      <tr>
+        <th>Time Remaining</th>
+        <th>Difficulty</th>
+        <th>Rationale</th>
+        <th>Guidance</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="t-easy">
+        <td>≤ 7 days</td>
+        <td style="color:#4ade80">Easy</td>
+        <td>Little time for new information, policy reversals, or unexpected events. The real-world situation is essentially locked in.</td>
+        <td>If current reality strongly favors the outcome and no near-term catalyst for reversal exists, CERTAIN is appropriate with normal scrutiny.</td>
+      </tr>
+      <tr class="t-std">
+        <td>8–30 days</td>
+        <td style="color:#94a3b8">Standard</td>
+        <td>Normal window. Some risk of new developments but limited.</td>
+        <td>Apply the standard threshold. Require 3 confirming signals. Do not relax or tighten beyond the base rules.</td>
+      </tr>
+      <tr class="t-hard">
+        <td>31–90 days</td>
+        <td style="color:#fb923c">Hard</td>
+        <td>Multiple weeks allow for: earnings surprises, regulatory decisions, geopolitical events, organizational changes.</td>
+        <td>Require stronger evidence. Lean toward LIKELY unless there is a structural impossibility. Flag any uncertain assumptions explicitly.</td>
+      </tr>
+      <tr class="t-vhard">
+        <td>91–365 days</td>
+        <td style="color:#f87171">Very Hard</td>
+        <td>A full quarter or more. Macro conditions, leadership changes, black swans become material probabilities.</td>
+        <td>Only structural impossibilities should be CERTAIN — e.g., an acquired company that legally cannot IPO, a mathematical upper bound on a statistic. Standard "current trajectory" reasoning insufficient.</td>
+      </tr>
+      <tr class="t-never">
+        <td>&gt; 365 days</td>
+        <td style="color:#e879f9">Almost Never</td>
+        <td>Year-plus horizon. Essentially any outcome is possible given sufficient time.</td>
+        <td>Reserve CERTAIN for logical or mathematical impossibilities only. LIKELY is almost always the ceiling here.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Category-Specific Notes</h3>
+  <div class="cat-grid">
+
+    <div class="cat-card">
+      <div class="cat-card-title">🗳 Political (elections, legislation, appointments)</div>
+      <ul>
+        <li><strong>Far-horizon markets are inherently unpredictable</strong> — incumbents lose, bills fail on procedural votes, nominees withdraw</li>
+        <li>Election markets: never CERTAIN more than ~7 days out unless an opponent withdrew, race was cancelled, or only one party filed</li>
+        <li>Appointment markets: confirmation is near-certain only after a Senate vote is scheduled and counted — not just after nomination</li>
+        <li>Legislative markets: floor vote scheduled ≠ passage; even after passage, executive signature is a separate event</li>
+        <li>Watch for: special elections, recalls, resignations, and redistricting</li>
+      </ul>
+    </div>
+
+    <div class="cat-card">
+      <div class="cat-card-title">🏢 IPO / Corporate Actions</div>
+      <ul>
+        <li><strong>Timelines shift constantly</strong> — S-1 filings are withdrawn, postponed, or repriced without warning</li>
+        <li>"By [month]" markets: CERTAIN NO only if: (1) company was acquired, (2) company went bankrupt, (3) explicit public withdrawal with no window to re-file before close, or (4) the month has passed</li>
+        <li>Mergers &amp; acquisitions: "Will X acquire Y by [date]?" — CERTAIN only after regulatory approvals and shareholder votes are complete</li>
+        <li>Settlement risk is high: Kalshi may resolve based on first trading day on exchange, not signing date or announcement</li>
+        <li>Watch for: SPAC alternatives, direct listings (may not count), and dual-class structures that can delay public float</li>
+      </ul>
+    </div>
+
+    <div class="cat-card">
+      <div class="cat-card-title">📊 Economic Indicators (CPI, GDP, unemployment, Fed rate)</div>
+      <ul>
+        <li><strong>Only near-term prints with known underlying data can be CERTAIN</strong></li>
+        <li>Monthly data releases (CPI, jobs report): can be CERTAIN 1–3 days before release if nowcast models converge and no revisions are pending</li>
+        <li>Fed rate decisions: CERTAIN only after the FOMC statement is published — market pricing of 95%+ is not the same as a decision</li>
+        <li>GDP: subject to multiple revisions; "advance" estimate ≠ final; be cautious about what the settlement criteria specifies (advance vs. second vs. final)</li>
+        <li>Longer-horizon economic markets (annual totals, year-end indicators): almost never CERTAIN</li>
+      </ul>
+    </div>
+
+    <div class="cat-card">
+      <div class="cat-card-title">⚽ Sports</div>
+      <ul>
+        <li><strong>Only CERTAIN for games happening within days with results verifiable</strong></li>
+        <li>Head-to-head outcomes: CERTAIN only if the game has already been played (live result) or the opponent forfeited/withdrew</li>
+        <li>"Champion by end of season" markets with many games remaining: almost never CERTAIN regardless of standings</li>
+        <li>Player performance markets: injury, lineup, and weather create non-trivial uncertainty even in games days away</li>
+        <li>Settlement risk: check whether Kalshi settles on the final result, including overtime/shootout, or on regulation only</li>
+        <li>Watch for: schedule changes, disqualifications, venue switches, weather cancellations</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════ CLUSTER CONTEXT -->
+<div class="section">
+  <h2>Cluster Context — Market Grouping Input</h2>
+  <p style="font-size:11px;color:#64748b;margin-bottom:14px">
+    Each candidate prompt may include a CLUSTER CONTEXT block listing sibling markets from the same event.
+    This is appended automatically by <code>market_clusterer.py</code> before the classifier receives the candidate.
+  </p>
+
+  <div class="callout teal">
+    <strong>Cluster context rules for the classifier:</strong>
+    <ul style="margin-top:6px;padding-left:14px;list-style:disc;color:#94a3b8;font-size:11px;line-height:1.6">
+      <li>Classify the primary market on its own merits first — don't average across siblings</li>
+      <li>If a sibling is priced inconsistently (e.g., "by June" NO@90c vs "by September" NO@80c for a cumulative event), treat the inconsistency as a <strong>contradicting signal</strong> — it means the crowd is logically inconsistent and the market may be wrong</li>
+      <li>If siblings are all pricing the same direction strongly, this can reinforce a CERTAIN classification — it means multiple independent markets have converged</li>
+      <li>If a <code>[!] PRICING INCONSISTENCY DETECTED</code> block appears, it was flagged by the monotonicity check and must be addressed in reasoning</li>
+    </ul>
+  </div>
+
+  <pre><span class="c">// Example CLUSTER CONTEXT block (appended to candidate prompt)</span>
+CLUSTER CONTEXT — 4 related markets under the same event:
+  [NO@91c] Will Databricks IPO by March 2026?
+  [NO@87c] Will Databricks IPO by April 2026?
+  [NO@82c] Will Databricks IPO by May 2026?
+
+[!] PRICING INCONSISTENCY DETECTED:
+  - 'Will Databricks IPO by March 2026?' at 91c > 'Will Databricks IPO by April 2026?' at 87c
+    (later deadline should price >= for a cumulative outcome)
+
+Note: classify this market on its own merits.
+Sibling markets share the same underlying event — ensure your conclusion is consistent with them.</pre>
+</div>
+
+<p style="margin-top:20px;font-size:10px;color:#334155;">
+  classifier.py · market_clusterer.py · kalshi_cron.py · Updated May 2026
+</p>
+
+</body>
+</html>
