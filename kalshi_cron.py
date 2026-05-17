@@ -314,6 +314,9 @@ if __name__ == "__main__":
 
     if mode == "finalize":
         finalize()
+    elif mode == "backtest":
+        from backtest import run as backtest_run
+        backtest_run()
     elif mode == "anomaly":
         print_anomaly_scan()
     elif mode in ("incremental", "full", "deep"):
@@ -324,5 +327,5 @@ if __name__ == "__main__":
         print(f"Unknown mode: {mode}")
         print("Usage: python3 kalshi_cron.py [incremental|full|deep|anomaly]")
         print("                              [pm-incremental|pm-full|pm-deep|pm-anomaly]")
-        print("                              [finalize]")
+        print("                              [finalize|backtest]")
         sys.exit(1)

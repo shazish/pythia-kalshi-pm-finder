@@ -205,6 +205,7 @@ class KalshiClient:
     def get_market(self, ticker, normalize=True):
         """Fetch a single market by ticker."""
         data = self._get(f"/markets/{ticker}")
+        market = data.get("market", data)  # unwrap {"market": {...}} envelope
         if normalize:
-            return self.normalize_market(data)
-        return data
+            return self.normalize_market(market)
+        return market
