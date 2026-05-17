@@ -14,19 +14,27 @@ from datetime import datetime, timezone
 BASE_URL = "https://gamma-api.polymarket.com"
 
 # Polymarket categories → our internal category names
+# Keys are both direct category strings and tag labels (Gamma API stores category in tags)
 CATEGORY_MAP = {
-    "Politics":                 "Politics",
-    "Business & Finance":       "Economics",
-    "Finance":                  "Economics",
-    "Economics":                "Economics",
-    "Entertainment & Pop Culture": "Entertainment",
-    "Pop Culture":              "Entertainment",
-    "Entertainment":            "Entertainment",
-    "Arts & Entertainment":     "Entertainment",
-    "World":                    "World",
-    "Science & Technology":     "Science",
-    "Sports":                   None,    # excluded
-    "Crypto":                   None,    # excluded
+    "Politics":                     "Politics",
+    "Business & Finance":           "Economics",
+    "Finance":                      "Economics",
+    "Economics":                    "Economics",
+    "Economy":                      "Economics",
+    "Business":                     "Economics",
+    "Markets":                      "Economics",
+    "Entertainment & Pop Culture":  "Entertainment",
+    "Pop Culture":                  "Entertainment",
+    "Entertainment":                "Entertainment",
+    "Arts & Entertainment":         "Entertainment",
+    "World":                        "World",
+    "News":                         "World",
+    "Science & Technology":         "Science",
+    "Science":                      "Science",
+    "Technology":                   "Science",
+    "Sports":                       None,    # excluded
+    "Crypto":                       None,    # excluded
+    "Cryptocurrency":               None,    # excluded
 }
 
 
@@ -53,18 +61,16 @@ class PolymarketClient:
             self._last_request = time.time()
             raise RuntimeError(f"Polymarket API error {endpoint}: {e}") from e
 
-    def get_events(self, limit: int = 100, cursor: str | None = None, active: bool = True) -> tuple[list, str | None]:
-        """Return (events, next_cursor). Events include nested markets."""
-        params = {"limit": limit, "active": "true" if active else "false", "closed": "false"}
-        if cursor:
-            params["after_cursor"] = cursor
+    def get_events(self, limit: int = 100, offset: int = 0, active: bool = True) -> tuple[list, bool]:
+        """Return (events, has_more). Events include nested markets.
+
+        Gamma API returns a bare list — no cursor. Use offset for pagination.
+        has_more is True when len(events) == limit (there may be another page).
+        """
+        params = {"limit": limit, "offset": offset, "active": "true" if active else "false", "closed": "false"}
         data = self._get("/events", params)
-        # Response may be a list directly or a dict with events + next_cursor
-        if isinstance(data, list):
-            return data, None
-        events = data.get("data", data.get("events", []))
-        next_cursor = data.get("next_cursor") or data.get("cursor")
-        return events, next_cursor
+        events = data if isinstance(data, list) else data.get("data", data.get("events", []))
+        return events, len(events) == limit
 
     def get_markets(self, limit: int = 100, cursor: str | None = None, active: bool = True) -> tuple[list, str | None]:
         """Return (markets, next_cursor)."""
@@ -88,6 +94,11 @@ class PolymarketClient:
         Volume is in USDC (float string).
         """
         outcome_prices = raw.get("outcomePrices") or []
+        if isinstance(outcome_prices, str):
+            try:
+                outcome_prices = json.loads(outcome_prices)
+            except Exception:
+                outcome_prices = []
         try:
             yes_mid = float(outcome_prices[0]) if outcome_prices else 0.5
             no_mid  = float(outcome_prices[1]) if len(outcome_prices) > 1 else (1 - yes_mid)
@@ -149,3 +160,21 @@ class PolymarketClient:
     def map_category(raw_category: str) -> str | None:
         """Return our internal category name, or None if the category should be skipped."""
         return CATEGORY_MAP.get(raw_category)
+
+    @staticmethod
+    def map_event_category(event: dict) -> str | None:
+        """Extract mapped category from event tags (Gamma API stores no top-level category field).
+
+        Iterates tags in order; returns the first non-None mapping found.
+        Returns None if no tag maps to a known category (event should be skipped).
+        """
+        raw_cat = event.get("category", "")
+        if raw_cat and raw_cat in CATEGORY_MAP:
+            return CATEGORY_MAP[raw_cat]
+        for tag in event.get("tags", []):
+            label = tag.get("label", "")
+            if label in CATEGORY_MAP:
+                mapped = CATEGORY_MAP[label]
+                if mapped is not None:
+                    return mapped
+        return None

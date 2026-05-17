@@ -139,6 +139,26 @@ class PolymarketScanner:
 
     def _enrich_candidate(self, market, side, scan_type):
         prob = market.get("yes_bid" if side == "YES" else "no_bid", 0) or 0
+        close_date = market.get("close_date", "")
+        volume = market.get("volume", 0) or 0
+
+        # Compute days_to_close
+        days_to_close = None
+        if close_date:
+            try:
+                close_dt = datetime.fromisoformat(close_date.replace("Z", "+00:00"))
+                delta = (close_dt - datetime.now(timezone.utc)).days
+                days_to_close = max(1, delta)
+            except Exception:
+                pass
+
+        # Compute urgency score (same formula as ScannerAgent)
+        import math
+        time_score = math.exp(-0.023 * days_to_close) if days_to_close else 0.1
+        prob_score = min(int(prob), 100) / 100.0
+        vol_score = min(math.log10(max(int(volume), 1)) / 4.0, 1.0)
+        urgency_score = round((0.50 * time_score + 0.30 * prob_score + 0.20 * vol_score) * 100, 2)
+
         return {
             "ticker":               market.get("ticker", ""),
             "title":                market.get("title", ""),
@@ -150,10 +170,11 @@ class PolymarketScanner:
             "yes_ask":              market.get("yes_ask"),
             "no_bid":               market.get("no_bid"),
             "no_ask":               market.get("no_ask"),
-            "volume":               market.get("volume"),
+            "volume":               volume,
             "open_interest":        market.get("open_interest"),
             "status":               market.get("status"),
-            "close_date":           market.get("close_date", ""),
+            "close_date":           close_date,
+            "days_to_close":        days_to_close,
             "settlement_source_url": market.get("settlement_source_url", ""),
             "rules_primary":        market.get("rules_primary", ""),
             "platform":             "Polymarket",
@@ -161,6 +182,7 @@ class PolymarketScanner:
             "high_confidence_side": side,
             "implied_probability":  int(prob),
             "volume_anomaly":       self._detect_volume_anomaly(market, side),
+            "urgency_score":        urgency_score,
             "candidate_type":       "polymarket",
             "scan_type":            scan_type,
             "scanned_at":           datetime.now(timezone.utc).isoformat(),
@@ -178,11 +200,11 @@ class PolymarketScanner:
         candidates = []
         events_seen = 0
         markets_seen = 0
-        cursor = None
+        offset = 0
 
         for page in range(self.config["max_pages"]):
             try:
-                events, cursor = self.client.get_events(limit=100, cursor=cursor)
+                events, has_more = self.client.get_events(limit=100, offset=offset)
             except Exception as e:
                 print(f"[PolymarketScanner] Fetch error page {page}: {e}")
                 break
@@ -190,10 +212,11 @@ class PolymarketScanner:
             if not events:
                 break
 
+            offset += len(events)
+
             for event in events:
                 events_seen += 1
-                raw_cat = event.get("category", "")
-                cat = self.client.map_category(raw_cat)
+                cat = self.client.map_event_category(event)
                 if cat not in self.config["scan_categories"]:
                     continue
 
@@ -207,11 +230,13 @@ class PolymarketScanner:
                         side = self._high_confidence_side(m)
                         candidates.append(self._enrich_candidate(m, side, "pm_full_scan"))
 
-            if not cursor:
+            if not has_more:
                 break
 
         self.cache["last_full_scan"] = datetime.now(timezone.utc).isoformat()
         self._save_cache()
+        # Sort by urgency score descending -- most actionable first
+        candidates.sort(key=lambda c: c.get("urgency_score", 0), reverse=True)
         print(f"[PolymarketScanner] Complete: {events_seen} events, {markets_seen} markets, "
               f"{len(candidates)} candidates")
         return candidates
@@ -282,11 +307,11 @@ class PolymarketScanner:
 
         candidates = []
         events_seen = 0
-        cursor = None
+        offset = 0
 
         for page in range(self.config["max_pages"]):
             try:
-                events, cursor = self.client.get_events(limit=100, cursor=cursor)
+                events, has_more = self.client.get_events(limit=100, offset=offset)
             except Exception as e:
                 print(f"[PolymarketScanner] Anomaly fetch error page {page}: {e}")
                 break
@@ -294,10 +319,11 @@ class PolymarketScanner:
             if not events:
                 break
 
+            offset += len(events)
+
             for event in events:
                 events_seen += 1
-                raw_cat = event.get("category", "")
-                cat = self.client.map_category(raw_cat)
+                cat = self.client.map_event_category(event)
                 if cat not in self.config["scan_categories"]:
                     continue
 
@@ -336,7 +362,7 @@ class PolymarketScanner:
                     candidate["candidate_type"] = "pm_anomaly"
                     candidates.append(candidate)
 
-            if not cursor:
+            if not has_more:
                 break
 
         self._save_cache()
