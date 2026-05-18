@@ -531,10 +531,13 @@ class ScannerAgent:
         implied_prob = self._implied_prob(market, side)
         volume = market.get("volume", 0) or 0
 
+        raw_subtitle = market.get("subtitle", "") or event.get("sub_title", "") or ""
+        subtitle = "" if raw_subtitle.strip(":").strip() == "" else raw_subtitle
+
         return {
             "ticker": market.get("ticker", ""),
             "title": market.get("title", "") or event.get("title", ""),
-            "subtitle": market.get("subtitle", "") or event.get("sub_title", ""),
+            "subtitle": subtitle,
             "event_ticker": event_ticker or event.get("event_ticker", ""),
             "series_ticker": market.get("series_ticker", "") or event.get("series_ticker", ""),
             "category": event.get("category", ""),
@@ -547,6 +550,8 @@ class ScannerAgent:
             "status": market.get("status"),
             "close_date": close_date,
             "days_to_close": days_to_close,
+            "platform": "Kalshi",
+            "settlement_currency": "USD",
             "settlement_source_url": (
                 market.get("settlement_source_url", "") or
                 event.get("settlement_source_url", "") or
