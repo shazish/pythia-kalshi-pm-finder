@@ -11,6 +11,7 @@ Key differences from Kalshi:
 - Settlement requires a USDC-funded wallet on Polygon — noted in candidate
 """
 import json
+import math
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -20,7 +21,8 @@ from polymarket_client import PolymarketClient
 DEFAULT_CONFIG = {
     "price_threshold":       85,    # cents — same as Kalshi primary
     "deep_scan_threshold":   80,    # cents
-    "spread_max":            5,     # wider than Kalshi (mid-prices only, no real spread data)
+    "spread_max":            5,     # cents — regular (high-confidence) scans
+    "anomaly_spread_max":   10,    # cents — anomaly scan; 20-79c markets have wider spreads
     "min_volume":            1000,  # USDC — higher floor than Kalshi contracts
     "price_change_threshold": 3,    # cents
     "max_pages":             30,    # events pages per full scan
@@ -153,7 +155,6 @@ class PolymarketScanner:
                 pass
 
         # Compute urgency score (same formula as ScannerAgent)
-        import math
         time_score = math.exp(-0.023 * days_to_close) if days_to_close else 0.1
         prob_score = min(int(prob), 100) / 100.0
         vol_score = min(math.log10(max(int(volume), 1)) / 4.0, 1.0)
@@ -334,6 +335,22 @@ class PolymarketScanner:
 
                     volume = float(m.get("volume") or 0)
                     if volume < self.config["min_volume"]:
+                        continue
+
+                    # Skip closed or expired markets
+                    if m.get("status") != "open":
+                        continue
+                    close_dt_str = m.get("close_date", "")
+                    try:
+                        close_dt = datetime.fromisoformat(close_dt_str.replace("Z", "+00:00"))
+                        if close_dt < datetime.now(timezone.utc):
+                            continue
+                    except Exception:
+                        continue
+
+                    # Skip illiquid markets — wide spread means entry cost ≠ displayed price
+                    spread = float(m.get("yes_ask", 0) or 0) - float(m.get("yes_bid", 0) or 0)
+                    if spread > self.config["anomaly_spread_max"]:
                         continue
 
                     side = self._high_confidence_side(m)

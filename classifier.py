@@ -8,6 +8,26 @@ Two entry points depending on candidate type:
 Both share the same output schema and validate_classification() rules so the
 Opportunity Manager can handle them identically downstream.
 """
+import re
+
+# ── Metric patterns ───────────────────────────────────────────────────────────
+# (rule_pattern, canonical_form, accepted_aliases)
+# Validator passes if any form (canonical OR alias) appears in LLM output.
+_METRIC_PATTERNS = [
+    (r"year[-\s]over[-\s]year",        "Year-over-Year",          ["YoY", "y/y", "year on year"]),
+    (r"quarter[-\s]over[-\s]quarter",  "Quarter-over-Quarter",    ["QoQ", "q/q", "quarter on quarter"]),
+    (r"month[-\s]over[-\s]month",      "Month-over-Month",        ["MoM", "m/m", "month on month"]),
+    (r"\bannualized\b",                "annualized",              ["annualized rate", "SAAR"]),
+    (r"\bnon[-\s]annualized\b",        "non-annualized",          []),
+    (r"seasonally adjusted",           "seasonally adjusted",     ["s.a.", "SA"]),
+    (r"not seasonally adjusted",       "not seasonally adjusted", ["NSA", "n.s.a."]),
+    (r"first\s+preliminary",           "first preliminary",       ["first estimate", "advance estimate"]),
+    (r"\bflash\b",                     "flash",                   ["flash estimate"]),
+    (r"\bpreliminary\b",               "preliminary",             []),
+    (r"\brevised\b",                   "revised",                 ["second estimate", "final estimate"]),
+    (r"\bheadline\b",                  "headline",                []),
+    (r"\bcore\b(?!.*market)",          "core",                    []),
+]
 
 # ── System prompt builders ────────────────────────────────────────────────────
 
@@ -24,6 +44,18 @@ CRITICAL RULES:
 6. Classify as CERTAIN only when the outcome is a near-mathematical certainty based on current real-world knowledge.
 7. If ANY contradicting signal exists, you MUST downgrade from CERTAIN to LIKELY.
 8. Always consider settlement risk: could Kalshi's settlement mechanism rule differently than expected?
+
+METRIC VERIFICATION (mandatory for economic/data-driven markets):
+- The candidate prompt includes a SETTLEMENT METRIC field extracted from the settlement rules.
+- Before citing ANY forecast, statistic, or data point as a confirming signal, you MUST verify it uses the EXACT SAME metric, unit, and definition as the settlement metric.
+- Common metric mismatches that MUST be flagged as contradicting signals:
+  - Annualized vs. non-annualized (e.g., "1.5% annualized" ≠ "0.4% quarter-over-quarter")
+  - Year-over-Year (YoY) vs. Quarter-over-Quarter (QoQ) vs. Month-over-Month (MoM)
+  - Seasonally adjusted vs. not seasonally adjusted
+  - Flash/preliminary vs. revised final figures
+  - Different index bases or methodologies (e.g., CPI-U vs. CPI-W, headline vs. core)
+- If you cannot find data using the exact settlement metric, you MUST downgrade to LIKELY and note the metric uncertainty in contradicting_signals.
+- If a confirming signal cites a different metric than the settlement rules, it is NOT a valid confirming signal — move it to contradicting_signals explaining the mismatch.
 
 TIME-TO-RESOLUTION FACTOR:
 The candidate prompt includes a `DAYS TO CLOSE` field. Use this to adjust your certainty threshold:
@@ -103,6 +135,18 @@ CRITICAL RULES:
 6. If you cannot find ANY reason to justify the accumulation, treat "unexplained smart money" as a mild confirming signal, not a red flag.
 7. Factor in the DAYS TO CLOSE: near-term anomalies (< 14 days) with high volume are stronger signals than far-horizon ones. Smart money is more likely to be informed about imminent events.
 
+METRIC VERIFICATION (mandatory for economic/data-driven markets):
+- The candidate prompt includes a SETTLEMENT METRIC field extracted from the settlement rules.
+- Before citing ANY forecast, statistic, or data point as a confirming signal, you MUST verify it uses the EXACT SAME metric, unit, and definition as the settlement metric.
+- Common metric mismatches that MUST be flagged as contradicting signals:
+  - Annualized vs. non-annualized (e.g., "1.5% annualized" ≠ "0.4% quarter-over-quarter")
+  - Year-over-Year (YoY) vs. Quarter-over-Quarter (QoQ) vs. Month-over-Month (MoM)
+  - Seasonally adjusted vs. not seasonally adjusted
+  - Flash/preliminary vs. revised final figures
+  - Different index bases or methodologies (e.g., CPI-U vs. CPI-W, headline vs. core)
+- If you cannot find data using the exact settlement metric, you MUST downgrade to LIKELY and note the metric uncertainty in contradicting_signals.
+- If a confirming signal cites a different metric than the settlement rules, it is NOT a valid confirming signal — move it to contradicting_signals explaining the mismatch.
+
 Output MUST be valid JSON matching the same schema as the regular classifier. Do not output anything else.
 
 OUTPUT SCHEMA:
@@ -141,6 +185,59 @@ ANOMALY_CLASSIFIER_SYSTEM_PROMPT = get_anomaly_classifier_system_prompt()
 
 # ── Prompt builders ───────────────────────────────────────────────────────────
 
+def extract_settlement_metric(rules: str) -> str:
+    """
+    Extract the specific metric/definition from settlement rules.
+    Returns a short string like 'Year-over-Year GDP growth rate (%)'
+    or empty string if nothing can be identified.
+
+    This is used to build a prominent SETTLEMENT METRIC field in the
+    classifier prompt so the LLM can verify that any forecast or data
+    it cites uses the exact same metric.
+    """
+    if not rules:
+        return ""
+
+    # Look for the resolution criterion — usually the first sentence or
+    # a phrase like "according to X's Y metric" or "as reported in X"
+    patterns = [
+        # "resolve according to <metric> as reported in <source>"
+        r"resolve according to (.+?)(?:\.|,?\s+as reported)",
+        # "resolve according to <metric>"
+        r"resolve according to (.+?)(?:\.|$)",
+        # "according to <source>'s <metric>"
+        r"according to (.+?)(?:\.|$)",
+        # "will be based on <metric>"
+        r"(?:based on|determined by) (.+?)(?:\.|$)",
+    ]
+
+    # Boilerplate fallback clauses that look like metrics but aren't
+    _BOILERPLATE = [
+        "information that is public",
+        "all previously published data",
+        "previously published data",
+        "data up to that time",
+        "information available",
+        "latest available",
+        "official results",
+        "credible reporting",
+        "consensus of credible",
+    ]
+
+    for pat in patterns:
+        m = re.search(pat, rules, re.IGNORECASE)
+        if m:
+            metric = m.group(1).strip()
+            if any(b in metric.lower() for b in _BOILERPLATE):
+                continue
+            # Truncate to keep the prompt compact
+            if len(metric) > 120:
+                metric = metric[:117] + "..."
+            return metric
+
+    return ""
+
+
 def build_regular_prompt(candidate, recency_days: int = 14):
     """
     Build the classifier prompt for a price-filter candidate (ScannerAgent output).
@@ -176,6 +273,9 @@ def build_regular_prompt(candidate, recency_days: int = 14):
     else:
         anomaly_section = ""
 
+    settlement_metric = extract_settlement_metric(rules)
+    metric_section = f"\nSETTLEMENT METRIC: {settlement_metric}" if settlement_metric else ""
+
     return f"""Classify this Kalshi market:
 
 TITLE: {candidate.get('title', 'N/A')}
@@ -192,6 +292,7 @@ OPEN INTEREST: {candidate.get('open_interest', 'N/A')}
 CLOSE DATE: {candidate.get('close_date', 'N/A')}
 DAYS TO CLOSE: {candidate.get('days_to_close', 'N/A')}
 URGENCY SCORE: {candidate.get('urgency_score', 'N/A')}/100
+{metric_section}
 
 SETTLEMENT SOURCE: {candidate.get('settlement_source_url', 'N/A')}{rules_section}{anomaly_section}
 
@@ -229,6 +330,8 @@ def build_anomaly_prompt(candidate, recency_days: int = 14):
 
     rules = candidate.get("rules_primary", "").strip()
     rules_section = f"\nSETTLEMENT RULES: {rules}" if rules else ""
+    settlement_metric = extract_settlement_metric(rules)
+    metric_section = f"\nSETTLEMENT METRIC: {settlement_metric}" if settlement_metric else ""
 
     return f"""Investigate this Kalshi VOLUME ANOMALY:
 
@@ -243,6 +346,7 @@ VOLUME: {total_vol:,}
 OPEN INTEREST: {candidate.get('open_interest', 'N/A')}
 CLOSE DATE: {candidate.get('close_date', 'N/A')}
 DAYS TO CLOSE: {candidate.get('days_to_close', 'N/A')}
+{metric_section}
 
 ANOMALY SIGNAL:
   Implied $ on {side} (high-confidence): ~${implied_hc:,}
@@ -274,8 +378,14 @@ build_classifier_prompt = build_regular_prompt
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
-def validate_classification(output):
-    """Validate the classifier output against structural rules. Shared by both prompt types."""
+def validate_classification(output, rules: str = ""):
+    """Validate the classifier output against structural rules. Shared by both prompt types.
+
+    Args:
+        output: the classification dict from the LLM
+        rules: optional settlement rules text — if provided, enables metric-consistency
+               checks that can auto-downgrade CERTAIN to LIKELY.
+    """
     errors = []
 
     if output.get("classification") == "CERTAIN":
@@ -291,6 +401,25 @@ def validate_classification(output):
         if not output.get("recent_developments", "").strip():
             errors.append("recent_developments is empty — recency search was not performed")
             output["classification"] = "LIKELY"
+
+        # Metric consistency check: if settlement rules specify a metric keyword
+        # (e.g. "Year-over-Year", "annualized", "quarter-over-quarter"),
+        # verify that at least one confirming signal or reason mentions the same metric.
+        # This catches the common failure of citing an annualized forecast for a
+        # YoY-resolving market (or vice versa).
+        if rules:
+            metric_keywords = _extract_metric_keywords(rules)
+            if metric_keywords:
+                all_text = " ".join(
+                    output.get("reasons", [])
+                    + [s.get("fact", "") for s in output.get("confirming_signals", [])]
+                ).lower()
+                if not any(kw.lower() in all_text for kw in metric_keywords):
+                    errors.append(
+                        f"Metric mismatch: settlement rules specify '{', '.join(metric_keywords)}' "
+                        f"but no confirming signal or reason mentions this metric — auto-downgrade to LIKELY"
+                    )
+                    output["classification"] = "LIKELY"
 
     if not output.get("what_would_change_this", "").strip():
         errors.append("what_would_change_this is empty")
@@ -310,6 +439,35 @@ def validate_classification(output):
     output["_validation_errors"] = errors
     output["_valid"] = len(errors) == 0
     return output
+
+
+def _extract_metric_keywords(rules: str) -> list:
+    """
+    Return a flat list of all accepted forms (canonical + aliases) for each
+    metric keyword found in the settlement rules.
+
+    The validator passes if ANY returned string appears in the LLM's output,
+    so LLM abbreviations like "YoY" or "QoQ" match alongside canonical forms.
+    """
+    if not rules:
+        return []
+
+    found_canonicals = []
+    accepted_forms = []
+    rules_lower = rules.lower()
+    for pattern, canonical, aliases in _METRIC_PATTERNS:
+        if re.search(pattern, rules_lower):
+            # Deduplicate: don't add both "preliminary" and "first preliminary"
+            if any(
+                canonical.lower() in existing.lower() or existing.lower() in canonical.lower()
+                for existing in found_canonicals
+            ):
+                continue
+            found_canonicals.append(canonical)
+            accepted_forms.append(canonical)
+            accepted_forms.extend(aliases)
+
+    return accepted_forms
 
 
 # ── CLI test ──────────────────────────────────────────────────────────────────
