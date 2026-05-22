@@ -157,10 +157,16 @@ Phase 2 — REASONING (3× parallel DeepSeek subagents):
   DO NOT use a pattern-matching script — classify based on research evidence only.
   Save to cache/results_batch{{N}}.json.
 
+Step 3 — VERIFY (fact-check CERTAIN entries):
+  Run: python3 scripts/verify_classifications.py
+  This checks CERTAIN classifications for hallucinated facts, invalid source URLs,
+  and market-price contradictions. Any failed CERTAIN is auto-downgraded to LIKELY.
+
 Merge & Finalize:
   1. Merge results_batch0/1/2.json into cache/classified.json
-  2. Run: python3 {__file__} finalize
-  3. Also produce a CSV: cache/classified.json → logs/kalshi_{{timestamp}}.csv
+  2. Run verify_classifications.py
+  3. Run: python3 {__file__} finalize
+  4. Also produce a CSV: cache/classified.json → logs/kalshi_{{timestamp}}.csv
 """)
 
 
