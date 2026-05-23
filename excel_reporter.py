@@ -77,6 +77,9 @@ def _apply(cell, **kwargs):
 
 def _market_url(r):
     """Return the web URL for the market on Kalshi or Polymarket."""
+    from pipeline_logger import get_logger
+    log = get_logger("excel_reporter")
+
     candidate = r.get("candidate", r)
     platform = candidate.get("platform", "Kalshi")
     if platform == "Polymarket":
@@ -87,7 +90,11 @@ def _market_url(r):
         return url
     else:
         series_ticker = candidate.get("series_ticker", "") or candidate.get("event_ticker", "")
-        return f"https://kalshi.com/markets/{series_ticker.lower()}" if series_ticker else ""
+        if not series_ticker:
+            log.warning("No series_ticker or event_ticker for ticker=%s — URL will be missing",
+                        candidate.get("ticker", "?"))
+            return ""
+        return f"https://kalshi.com/markets/{series_ticker.lower()}"
 
 
 def _ticker_cell(r):
@@ -306,6 +313,11 @@ def export_excel(to_notify, to_log, output_path):
         to_log:    list of all other classified results
         output_path: .xlsx file path
     """
+    from pipeline_logger import get_logger
+    log = get_logger("excel_reporter")
+
+    log.info("export_excel() — notifying=%d, logging=%d, path=%s",
+             len(to_notify), len(to_log), output_path)
     # Tag notify rows with their status
     for r in to_notify:
         r["_opportunity_status"] = "OPPORTUNITY"

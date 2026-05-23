@@ -140,21 +140,21 @@ def _print_two_phase_instructions(candidates, candidates_file, is_anomaly=False)
     print("TWO-PHASE CLASSIFICATION INSTRUCTIONS:")
     print(f"{'='*60}")
     print(f"""
-Phase 1 — RESEARCH (3× parallel Owl Alpha subagents):
+Phase 1 — RESEARCH (SEQUENTIAL Owl Alpha subagents):
   Read the candidates file at cache/{candidates_file.split('/')[-1]}.
   Split candidates into 3 batches.
-  Use delegate_task(tasks=[...]) with 3 parallel Owl Alpha subagents.
-  Set model to {{"model": "openrouter/owl-alpha", "provider": "openrouter"}} per task.
+  Run Owl Alpha subagents ONE AT A TIME — do NOT use tasks=[...] with 3 parallel entries,
+  as concurrent OpenRouter connections trigger 401s and timeouts.
+  For each batch separately: delegate_task(goal="...", model={{"model": "openrouter/owl-alpha", "provider": "openrouter"}}, toolsets=[web, terminal, file])
+  Wait for each subagent to finish before starting the next batch.
   Each subagent saves to cache/research_batch{{N}}.json.
-  Give them the file path and tell them: "Research only. Do NOT classify."
 
-Phase 2 — REASONING (3× parallel DeepSeek subagents):
+Phase 2 — REASONING (main agent — NOT a subagent):
   Read cache/research_batch0.json, research_batch1.json, research_batch2.json.
-  Use delegate_task with 3 parallel DeepSeek subagents to classify based on research.
-  Set model to {{"model": "deepseek/deepseek-v4-flash", "provider": "nous"}} per task.
-  Each subagent reads its research file and produces classifications using
-  validate_classification() from classifier.py.
-  DO NOT use a pattern-matching script — classify based on research evidence only.
+  Classify each candidate based SOLELY on the research evidence — run via execute_code,
+  do NOT delegate to subagents (nous DeepSeek also times out at 600s).
+  Use if/elif reasoning chains keyed by ticker or evidence patterns; call
+  validate_classification() from classifier.py on every output.
   Save to cache/results_batch{{N}}.json.
 
 Step 3 — VERIFY (fact-check CERTAIN entries):
@@ -166,7 +166,6 @@ Merge & Finalize:
   1. Merge results_batch0/1/2.json into cache/classified.json
   2. Run verify_classifications.py
   3. Run: python3 {__file__} finalize
-  4. Also produce a CSV: cache/classified.json → logs/kalshi_{{timestamp}}.csv
 """)
 
 
@@ -214,12 +213,28 @@ def print_pm_scan(mode):
 
 def finalize():
     """Load classified.json, validate, run opportunity manager, export report."""
+    from pipeline_logger import get_logger
+    log = get_logger("kalshi_cron")
+
     if not os.path.exists(CLASSIFIED_FILE):
+        log.error("No classified.json found at %s. Classification step must run first.", CLASSIFIED_FILE)
         print("[kalshi_cron] No classified.json found. Classification step must run first.")
         sys.exit(1)
 
     with open(CLASSIFIED_FILE) as f:
         classified = json.load(f)
+
+    log.info("finalize() started — %d entries loaded from classified.json", len(classified))
+
+    # Audit for structural issues before processing
+    for i, cm in enumerate(classified):
+        if "candidate" not in cm:
+            log.warning("Entry %d has no 'candidate' key — will produce blank report columns", i)
+        elif not isinstance(cm.get("candidate"), dict):
+            log.warning("Entry %d 'candidate' is %s, not dict", i, type(cm["candidate"]).__name__)
+        elif not cm.get("candidate", {}).get("series_ticker"):
+            log.debug("Entry %d (%s) missing series_ticker", i,
+                      cm.get("candidate", {}).get("ticker", "?"))
 
     for cm in classified:
         if "classification" in cm and isinstance(cm["classification"], dict):
@@ -233,18 +248,23 @@ def finalize():
 
     if to_log:
         n = mgr.log_to_dashboard(to_log)
+        log.info("Logged %d entries to dashboard", n)
         print(f"[kalshi_cron] Logged {n} entries to dashboard")
 
     if to_notify:
+        log.info("Reporting %d opportunities", len(to_notify))
         print(f"\n[kalshi_cron] {len(to_notify)} OPPORTUNITIES:")
         for opp in to_notify:
             print("\n" + mgr.format_notification(opp))
     else:
+        log.info("No opportunities above threshold")
         print("[kalshi_cron] No opportunities above threshold.")
 
+    mode_label = sys.argv[1] if len(sys.argv) > 1 else "incremental"
     timestamp = __import__("datetime").datetime.now().strftime("%Y%m%d_%H%M")
-    excel_path = os.path.join(SKILL_DIR, "logs", f"kalshi_{timestamp}.xlsx")
+    excel_path = os.path.join(SKILL_DIR, "logs", f"kalshi_{mode_label}_{timestamp}.xlsx")
     result_path = export_excel(to_notify, to_log, excel_path)
+    log.info("Report saved: %s", result_path)
     print(f"\n[kalshi_cron] Report saved: {result_path}")
 
 

@@ -178,8 +178,18 @@ class OpportunityManager:
         Process a list of classified markets.
         Returns (to_notify, to_log) — two lists.
         """
+        from pipeline_logger import get_logger
+        log = get_logger("opportunity_manager")
+
+        log.info("process() started — %d classified markets", len(classified_markets))
+
         to_notify = []
         to_log = []
+        skipped_no_candidate = 0
+        skipped_not_certain = 0
+        skipped_validation = 0
+        skipped_duplicate = 0
+        skipped_below_threshold = 0
 
         for cm in classified_markets:
             classification = cm.get("classification", {})
@@ -194,6 +204,7 @@ class OpportunityManager:
                     "routing": "skipped_not_certain",
                     "logged_at": datetime.now(timezone.utc).isoformat(),
                 })
+                skipped_not_certain += 1
                 continue
 
             # Validate the classification passed structural checks
@@ -204,6 +215,7 @@ class OpportunityManager:
                     "validation_errors": classification.get("_validation_errors", []),
                     "logged_at": datetime.now(timezone.utc).isoformat(),
                 })
+                skipped_validation += 1
                 continue
 
             # Compute edge and sizing
@@ -245,6 +257,7 @@ class OpportunityManager:
             if self._already_notified(ticker, side):
                 opportunity["routing"] = "skipped_already_notified"
                 to_log.append(opportunity)
+                skipped_duplicate += 1
                 continue
 
             # Edge threshold check — time-adjusted
@@ -262,6 +275,13 @@ class OpportunityManager:
             else:
                 opportunity["routing"] = "logged_below_threshold"
                 to_log.append(opportunity)
+                skipped_below_threshold += 1
+
+        log.info(
+            "process() complete — notify=%d, log=%d | skipped: not_certain=%d, validation=%d, duplicate=%d, below_threshold=%d",
+            len(to_notify), len(to_log), skipped_not_certain, skipped_validation,
+            skipped_duplicate, skipped_below_threshold,
+        )
 
         return to_notify, to_log
 
