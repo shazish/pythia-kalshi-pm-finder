@@ -87,6 +87,13 @@ class AnomalyScanner:
         return False
 
     @staticmethod
+    def _extract_settlement_url(event):
+        sources = event.get("settlement_sources", [])
+        if sources and isinstance(sources, list):
+            return sources[0].get("url", "")
+        return ""
+
+    @staticmethod
     def _high_confidence_side(market):
         yes_bid = market.get("yes_bid", 0) or 0
         no_bid = market.get("no_bid", 0) or 0
@@ -157,6 +164,13 @@ class AnomalyScanner:
         opp_price = 100 - hc_price
         implied_opp_dollars = int(volume * opp_price / 100)
 
+        # Require meaningful asymmetry: near-50/50 markets pass the dollar floor
+        # because of high volume, not because smart money is asymmetrically positioned.
+        hc_to_opp_ratio = round(implied_hc_dollars / max(implied_opp_dollars, 1), 2)
+        min_ratio = self.config.get("min_hc_ratio", 1.0)
+        if hc_to_opp_ratio < min_ratio:
+            return None
+
         return {
             "anomaly_type": "smart_money_accumulation",
             "high_confidence_side": side,
@@ -164,7 +178,7 @@ class AnomalyScanner:
             "implied_hc_dollars": implied_hc_dollars,
             "implied_opp_dollars": implied_opp_dollars,
             "total_volume": int(volume),
-            "hc_to_opp_ratio": round(implied_hc_dollars / max(implied_opp_dollars, 1), 2),
+            "hc_to_opp_ratio": hc_to_opp_ratio,
         }
 
     # ── Enrichment ─────────────────────────────────────────────────
@@ -214,6 +228,7 @@ class AnomalyScanner:
             "settlement_source_url": (
                 market.get("settlement_source_url", "")
                 or event.get("settlement_source_url", "")
+                or self._extract_settlement_url(event)
             ),
             "rules_primary": market.get("rules_primary", "") or event.get("rules_primary", ""),
             "high_confidence_side": side,

@@ -46,6 +46,7 @@ SCANNER_CONFIG = {
     "deep_scan_threshold": 80,
     "spread_max": 3,
     "min_volume": 50,
+    "deep_spread_min_volume": 200,
     "price_change_threshold": 3,
     "candidates_file": CANDIDATES_FILE,
     "cache_file": os.path.join(SKILL_DIR, "cache", "market_cache.json"),
@@ -56,6 +57,7 @@ ANOMALY_CONFIG = {
     "max_price": 79,
     "min_implied_hc_dollars": 10000,
     "min_volume": 500,
+    "min_hc_ratio": 1.5,
     "candidates_file": ANOMALY_CANDIDATES_FILE,
     "cache_file": os.path.join(SKILL_DIR, "cache", "anomaly_cache.json"),
 }
@@ -155,7 +157,7 @@ Phase 2 — REASONING (main agent — NOT a subagent):
   For each candidate, read the actual research findings (key_quote, source_url, summary).
   Classify based SOLELY on what the research evidence says — NOT on ticker pattern matching.
   Write reasons that cite specific evidence from the findings.
-  Write confirming_signals as [{"fact": "...", "source_url": "..."}] with REAL URLs from research.
+  Write confirming_signals as [{{"fact": "...", "source_url": "..."}}] with REAL URLs from research.
   Write recent_developments from the actual research summary.
   DO NOT write a classification script — reason about each candidate directly in execute_code.
   DO NOT use hardcoded template text that ignores the research.
@@ -289,6 +291,7 @@ def finalize():
     # "pm_full_scan", "backtest").
     _SCAN_TYPE_MAP = {
         "deep_scan":         "deep",
+        "deep_spread_scan":  "deep",   # wide-spread subgroup of deep scan
         "full_scan":         "full",
         "incremental_scan":  "incremental",
         "anomaly_scan":      "anomaly",

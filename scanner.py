@@ -15,6 +15,7 @@ DEFAULT_CONFIG = {
     "deep_scan_threshold": 80,      # cents — secondary daily scan (broader net)
     "spread_max": 3,                # max bid-ask spread in cents
     "min_volume": 50,               # minimum volume as secondary signal
+    "deep_spread_min_volume": 200,  # higher volume floor for wide-spread (spread > spread_max) markets in deep scan
     "price_change_threshold": 3,    # cents — meaningful change vs cache
     "max_pages": 20,                # max event pages per full scan (2,000 events)
     "incremental_max_pages": 5,     # max market pages per incremental scan (500 markets)
@@ -192,8 +193,12 @@ class ScannerAgent:
 
     def _passes_deep_filters(self, market):
         """
-        Relaxed price threshold for the daily deep scan.
-        All other guards (combo, volume, date window) are the same as _passes_filters.
+        Relaxed filters for the daily deep scan: lower price threshold (deep_scan_threshold)
+        and up to 2× the primary spread ceiling.
+
+        Markets above the primary price threshold that land here have wide spreads
+        (spread-rescue captures). They require a higher volume floor (deep_spread_min_volume)
+        because thin wide-spread markets at high prices are rarely actionable.
         """
         yes_bid = market.get("yes_bid", 0) or 0
         no_bid = market.get("no_bid", 0) or 0
@@ -213,8 +218,13 @@ class ScannerAgent:
         if spread > self.config["spread_max"] * 2:
             return False
 
-        # Volume — same threshold as primary
-        if volume < self.config["min_volume"]:
+        # Markets above primary price threshold are here due to spread relaxation only.
+        # Require a higher volume floor to filter out thin illiquid markets.
+        hc_price = yes_bid if yes_bid >= no_bid else no_bid
+        if hc_price >= self.config["price_threshold"]:
+            if volume < self.config.get("deep_spread_min_volume", 200):
+                return False
+        elif volume < self.config["min_volume"]:
             return False
 
         # Date window — same as primary
@@ -392,7 +402,11 @@ class ScannerAgent:
                     # Only capture markets the primary filter missed
                     if not self._passes_filters(normalized) and self._passes_deep_filters(normalized):
                         side = self._high_confidence_side(normalized)
-                        candidate = self._enrich_candidate(normalized, side, "deep_scan", event=event)
+                        hc_price = normalized.get("yes_bid", 0) if side == "YES" else normalized.get("no_bid", 0)
+                        # Markets above primary price threshold are here due to spread relaxation,
+                        # not a lower price — give them a distinct label so the classifier has context.
+                        scan_type = "deep_spread_scan" if (hc_price or 0) >= self.config["price_threshold"] else "deep_scan"
+                        candidate = self._enrich_candidate(normalized, side, scan_type, event=event)
                         candidate["rules_primary"] = m.get("rules_primary", "")
                         candidates.append(candidate)
                     self._update_cache(ticker, normalized, category=cat)
@@ -443,17 +457,22 @@ class ScannerAgent:
 
             for m in [self.client.normalize_market(x) for x in markets]:
                 ticker = m.get("ticker", "")
+                # Cheap pre-check: skip known out-of-scope categories before any API call
+                cached_category = self.cache["markets"].get(ticker, {}).get("category", "")
+                if cached_category and cached_category not in scan_categories:
+                    self._update_cache(ticker, m, category=cached_category)
+                    continue
                 if self._price_changed(ticker, m) and self._passes_filters(m):
                     side = self._high_confidence_side(m)
                     candidate = self._enrich_candidate(m, side, "incremental_scan")
-                    category = candidate.get("category", "")
+                    category = candidate.get("category", "") or cached_category
                     if category and category not in scan_categories:
                         self._update_cache(ticker, m, category=category)
                         continue
                     candidates.append(candidate)
                     self._update_cache(ticker, m, category=category)
                 else:
-                    self._update_cache(ticker, m)
+                    self._update_cache(ticker, m, category=cached_category)
 
             cursor = data.get("cursor")
             pages_fetched += 1
@@ -586,8 +605,10 @@ class ScannerAgent:
     def save_candidates(self, candidates, path=None):
         path = path or self.config["candidates_file"]
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(candidates, f, indent=2)
+        os.replace(tmp, path)
         return path
 
     def load_candidates(self, path=None):
