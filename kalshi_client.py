@@ -18,10 +18,11 @@ BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
 
 class KalshiClient:
-    def __init__(self, max_retries=3, backoff_factor=2, min_request_interval=0.15):
+    def __init__(self, max_retries=3, backoff_factor=2, min_request_interval=0.25):
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         self.min_request_interval = min_request_interval  # seconds between requests
+        self._throttle_cap = 2.0                          # max adaptive interval after 429s
         self.session = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
         self._last_request_time = 0
@@ -46,7 +47,13 @@ class KalshiClient:
                     wait = float(retry_after)
                 else:
                     wait = self.backoff_factor ** (attempt + 1)
-                print(f"[KalshiClient] 429 rate limited, waiting {wait:.1f}s...")
+                # Step up the proactive throttle so subsequent requests in this
+                # session don't immediately re-trigger the same limit.
+                self.min_request_interval = min(
+                    self.min_request_interval * 1.5, self._throttle_cap
+                )
+                print(f"[KalshiClient] 429 rate limited, waiting {wait:.1f}s "
+                      f"(throttle → {self.min_request_interval:.2f}s)...")
                 time.sleep(wait)
                 continue
             if resp.status_code >= 500:
