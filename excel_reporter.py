@@ -300,7 +300,7 @@ def _extract_near_misses(to_log):
     return near_misses
 
 
-def export_excel(to_notify, to_log, output_path):
+def export_excel(to_notify, to_log, output_path, mode_label=""):
     """
     Write a two-sheet Excel workbook.
 
@@ -309,12 +309,17 @@ def export_excel(to_notify, to_log, output_path):
     edge threshold, or deduplication — shown so the sheet is never misleadingly empty.
 
     Args:
-        to_notify: list of opportunity dicts above edge threshold
-        to_log:    list of all other classified results
-        output_path: .xlsx file path
+        to_notify:    list of opportunity dicts above edge threshold
+        to_log:       list of all other classified results
+        output_path:  .xlsx file path
+        mode_label:   scan mode string appended to sheet titles (e.g. "deep").
+                      Defaults to "finalize" when not provided.
     """
     from pipeline_logger import get_logger
     log = get_logger("excel_reporter")
+
+    if not mode_label:
+        mode_label = "finalize"
 
     log.info("export_excel() — notifying=%d, logging=%d, path=%s",
              len(to_notify), len(to_log), output_path)
@@ -337,7 +342,7 @@ def export_excel(to_notify, to_log, output_path):
     ws_opp.title = "Opportunities"
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     opp_title = (
-        f"Kalshi Opportunities — {timestamp}  "
+        f"Kalshi {mode_label.capitalize()} Opportunities — {timestamp}  "
         f"({len(to_notify)} actionable  |  {len(near_misses)} near-miss)"
     )
     _write_sheet(ws_opp, OPPORTUNITY_COLS, opp_rows, opp_title)
@@ -349,7 +354,7 @@ def export_excel(to_notify, to_log, output_path):
         ws_all,
         ALL_RESULTS_COLS,
         all_rows,
-        f"All Classified Markets — {timestamp}  ({len(all_rows)} total)",
+        f"All Classified Markets — {mode_label.capitalize()} — {timestamp}  ({len(all_rows)} total)",
     )
 
     # Sheet 3: Legend
