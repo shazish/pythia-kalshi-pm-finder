@@ -71,8 +71,8 @@ def verify_certain_classification(entry):
     # If market strongly disagrees with CERTAIN (big gap), flag it
     if side == 'YES' and price < 50:
         issues.append(f"Market prices YES at {price}c but classified CERTAIN YES — market disagrees")
-    elif side == 'NO' and price > 50:
-        issues.append(f"Market prices NO at {100-price}c but classified CERTAIN NO — market disagrees")
+    elif side == 'NO' and price < 50:
+        issues.append(f"Market prices NO at {price}c but classified CERTAIN NO — market disagrees")
     
     # Check 3: Specific known hallucination risks per ticker
     if 'SHUTDOWN' in ticker or 'SHUT' in ticker:

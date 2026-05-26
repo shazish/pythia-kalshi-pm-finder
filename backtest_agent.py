@@ -66,11 +66,8 @@ class BacktestAgent:
                 "open_interest": m.get("open_interest"),
                 "status": "settled",
                 "close_date": m.get("close_date") or event.get("strike_date", ""),
-                "settlement_source_url": (
-                    m.get("settlement_source_url", "") or
-                    event.get("settlement_source_url", "") or
-                    self._extract_settlement_url(event)
-                ),
+                "rules_primary": m.get("rules_primary", "") or event.get("rules_primary", ""),
+                "rules_secondary": m.get("rules_secondary", "") or event.get("rules_secondary", ""),
                 "high_confidence_side": side,
                 "implied_probability": yes_bid if side == "YES" else no_bid,
                 "actual_result": m.get("result", ""),  # hidden from classifier
@@ -79,13 +76,6 @@ class BacktestAgent:
             })
 
         return candidates
-
-    @staticmethod
-    def _extract_settlement_url(event):
-        sources = event.get("settlement_sources", [])
-        if sources and isinstance(sources, list):
-            return sources[0].get("url", "")
-        return ""
 
     def evaluate_results(self, classified_results):
         """

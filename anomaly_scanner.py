@@ -87,13 +87,6 @@ class AnomalyScanner:
         return False
 
     @staticmethod
-    def _extract_settlement_url(event):
-        sources = event.get("settlement_sources", [])
-        if sources and isinstance(sources, list):
-            return sources[0].get("url", "")
-        return ""
-
-    @staticmethod
     def _high_confidence_side(market):
         yes_bid = market.get("yes_bid", 0) or 0
         no_bid = market.get("no_bid", 0) or 0
@@ -225,12 +218,8 @@ class AnomalyScanner:
             "urgency_score": urgency_score,
             "platform": "Kalshi",
             "settlement_currency": "USD",
-            "settlement_source_url": (
-                market.get("settlement_source_url", "")
-                or event.get("settlement_source_url", "")
-                or self._extract_settlement_url(event)
-            ),
             "rules_primary": market.get("rules_primary", "") or event.get("rules_primary", ""),
+            "rules_secondary": market.get("rules_secondary", "") or event.get("rules_secondary", ""),
             "high_confidence_side": side,
             "implied_probability": hc_price,
             "anomaly_evidence": anomaly_evidence,

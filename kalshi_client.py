@@ -136,7 +136,6 @@ class KalshiClient:
             "status": market.get("status", ""),
             "close_date": market.get("close_time", ""),
             "expiration_date": market.get("expiration_time", ""),
-            "settlement_source_url": market.get("settlement_source_url", ""),
             "rules_primary": market.get("rules_primary", ""),
             "rules_secondary": market.get("rules_secondary", ""),
             "result": market.get("result", ""),

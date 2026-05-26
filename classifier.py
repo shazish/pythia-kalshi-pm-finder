@@ -248,7 +248,9 @@ def build_regular_prompt(candidate, recency_days: int = 14):
     prob = candidate["implied_probability"]
 
     rules = candidate.get("rules_primary", "").strip()
-    rules_section = f"\nSETTLEMENT RULES: {rules}" if rules else ""
+    rules_secondary = candidate.get("rules_secondary", "").strip()
+    rules_section = (f"\nSETTLEMENT RULES: {rules}" +
+                     (f"\nSETTLEMENT RULES (DETAIL): {rules_secondary}" if rules_secondary else "")) if rules else ""
 
     anomaly = candidate.get("volume_anomaly")
     if anomaly:
@@ -296,7 +298,7 @@ DAYS TO CLOSE: {candidate.get('days_to_close', 'N/A')}
 URGENCY SCORE: {candidate.get('urgency_score', 'N/A')}/100
 {metric_section}
 
-SETTLEMENT SOURCE: {candidate.get('settlement_source_url', 'N/A')}{rules_section}{anomaly_section}
+{rules_section}{anomaly_section}
 
 IMPORTANT: Use the DAYS TO CLOSE value to calibrate your certainty threshold.
 - <= 7 days: Easier to classify as CERTAIN (little time for surprises)
@@ -331,7 +333,9 @@ def build_anomaly_prompt(candidate, recency_days: int = 14):
     ratio = evidence.get("hc_to_opp_ratio", 0)
 
     rules = candidate.get("rules_primary", "").strip()
-    rules_section = f"\nSETTLEMENT RULES: {rules}" if rules else ""
+    rules_secondary = candidate.get("rules_secondary", "").strip()
+    rules_section = (f"\nSETTLEMENT RULES: {rules}" +
+                     (f"\nSETTLEMENT RULES (DETAIL): {rules_secondary}" if rules_secondary else "")) if rules else ""
     settlement_metric = extract_settlement_metric(rules)
     metric_section = f"\nSETTLEMENT METRIC: {settlement_metric}" if settlement_metric else ""
 
@@ -357,7 +361,7 @@ ANOMALY SIGNAL:
   Ratio (HC / opposite):                 {ratio}x
   This means roughly {ratio}x more capital is on the {side} side than the opposite.
 
-SETTLEMENT SOURCE: {candidate.get('settlement_source_url', 'N/A')}{rules_section}
+{rules_section}
 
 Your investigation questions:
 1. Why is ${implied_hc:,} sitting on {side} at only {prob}c? What do those bettors know?

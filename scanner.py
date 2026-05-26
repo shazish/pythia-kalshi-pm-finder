@@ -335,7 +335,6 @@ class ScannerAgent:
                         side = self._high_confidence_side(normalized)
                         # Pass event to avoid a redundant get_event() API call
                         candidate = self._enrich_candidate(normalized, side, "full_scan", event=event)
-                        candidate["rules_primary"] = m.get("rules_primary", "")
                         all_candidates.append(candidate)
                     self._update_cache(ticker, normalized, category=cat)
 
@@ -407,7 +406,6 @@ class ScannerAgent:
                         # not a lower price — give them a distinct label so the classifier has context.
                         scan_type = "deep_spread_scan" if (hc_price or 0) >= self.config["price_threshold"] else "deep_scan"
                         candidate = self._enrich_candidate(normalized, side, scan_type, event=event)
-                        candidate["rules_primary"] = m.get("rules_primary", "")
                         candidates.append(candidate)
                     self._update_cache(ticker, normalized, category=cat)
 
@@ -571,12 +569,8 @@ class ScannerAgent:
             "days_to_close": days_to_close,
             "platform": "Kalshi",
             "settlement_currency": "USD",
-            "settlement_source_url": (
-                market.get("settlement_source_url", "") or
-                event.get("settlement_source_url", "") or
-                self._extract_settlement_url(event)
-            ),
             "rules_primary": market.get("rules_primary", "") or event.get("rules_primary", ""),
+            "rules_secondary": market.get("rules_secondary", "") or event.get("rules_secondary", ""),
             "high_confidence_side": side,
             "implied_probability": implied_prob,
             "volume_anomaly": self._detect_volume_anomaly(market, side),
@@ -591,14 +585,6 @@ class ScannerAgent:
         if side == "YES":
             return market.get("yes_bid", 0) or 0
         return market.get("no_bid", 0) or 0
-
-    @staticmethod
-    def _extract_settlement_url(event):
-        """Try to find settlement source URL from event data."""
-        sources = event.get("settlement_sources", [])
-        if sources and isinstance(sources, list):
-            return sources[0].get("url", "")
-        return ""
 
     # ── Output ─────────────────────────────────────────────────────
 
