@@ -197,18 +197,19 @@ Phase 1 — RESEARCH (SEQUENTIAL Owl Alpha subagents):
   Wait for each subagent to finish before starting the next batch.
   Each subagent saves to cache/research_batch{{N}}.json AND logs/{run_dir}/research_batch{{N}}.json.
 
-Phase 2 — REASONING (main agent — NOT a subagent):
-  Read ALL cache/research_batch*.json files (there may be more than 3).
-  For each candidate, read the actual research findings (key_quote, source_url, summary).
-  Classify based SOLELY on what the research evidence says — NOT on ticker pattern matching.
-  Write reasons that cite specific evidence from the findings.
-  Write confirming_signals as [{{"fact": "...", "source_url": "..."}}] with REAL URLs from research.
-  Write recent_developments from the actual research summary.
-  DO NOT write a classification script — reason about each candidate directly in execute_code.
-  DO NOT use hardcoded template text that ignores the research.
-  DO NOT delegate to subagents (nous DeepSeek also times out at 600s).
-  Call validate_classification() from classifier.py on every output.
-  Save to cache/classified.json AND logs/{run_dir}/classified.json.
+Phase 2 — CLASSIFICATION (main agent — NOT a subagent):
+  Load all cache/research_batch*.json into a ticker→research dict.
+  For each candidate, call Classifier.classify(candidate, research=research_entry) — one focused
+  LLM call per ticker. The Classifier prompt is in classifier.py; do NOT bypass it.
+  Inject Phase 1 research (findings + summary) into the prompt as additional evidence context.
+  Call validate_classification() on every output before saving.
+  Save final list to cache/classified.json AND logs/{run_dir}/classified.json.
+
+  PROHIBITED — stop and ask the user before doing any of the following:
+  - Writing a Python file with classification tuples hardcoded per ticker
+  - Reasoning about all tickers in one in-context pass and saving results as constants
+  - Skipping Classifier.classify() for any reason
+  - Substituting any other approach for the per-ticker LLM call design above
 
 Step 3 — VERIFY (fact-check CERTAIN entries):
   Run: python3 scripts/verify_classifications.py
