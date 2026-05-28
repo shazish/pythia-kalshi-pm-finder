@@ -212,23 +212,6 @@ def run_pm_scan(mode):
         scanner.save_candidates(candidates)
     return candidates or []
 
-def _run_verification():
-    """Execute the verification script that downgrades invalid CERTAIN entries."""
-    import subprocess, sys
-    print("[kalshi_cron] Running verification step…")
-    result = subprocess.run(["python3", "scripts/verify_classifications.py"], cwd=SKILL_DIR, capture_output=True, text=True)
-    print(result.stdout)
-    if result.returncode != 0:
-        print("[kalshi_cron] Verification script failed:")
-        print(result.stderr)
-        sys.exit(1)
-
-def _run_finalize_if_requested(mode_label):
-    """If the user asked for automatic finalisation, invoke the finalize routine."""
-    if os.getenv("KALSHI_AUTO_FINALIZE") == "1":
-        print("[kalshi_cron] Auto‑finalising run…")
-        finalize()
-
 # ── Output helpers ────────────────────────────────────────────────────────────
 
 def _print_two_phase_instructions(candidates, candidates_file, run_dir, is_anomaly=False):
