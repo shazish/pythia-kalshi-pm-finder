@@ -8,6 +8,7 @@ Two entry points depending on candidate type:
 Both share the same output schema and validate_classification() rules so the
 Opportunity Manager can handle them identically downstream.
 """
+import os
 import re
 
 # ── Metric patterns ───────────────────────────────────────────────────────────
@@ -481,25 +482,33 @@ def _extract_metric_keywords(rules: str) -> list:
 
 class Classifier:
     """
-    Calls the Anthropic API once per ticker and returns a validated classification dict.
+    Calls the active LLM (Anthropic or OpenRouter) once per ticker and returns a
+    validated classification dict.
+
+    Model resolution order (first match wins):
+        1. model= argument passed to __init__
+        2. CLASSIFIER_MODEL env var
+        3. HERMES_MODEL env var
+        4. MODEL env var
+        5. Fallback: claude-sonnet-4-6
+
+    API routing:
+        openrouter/* models  →  OpenRouter  (needs OPENROUTER_API_KEY)
+        everything else      →  Anthropic   (needs ANTHROPIC_API_KEY)
 
     Usage:
-        clf = Classifier()                          # reads ANTHROPIC_API_KEY from env/.env
+        clf = Classifier()
         result = clf.classify(candidate, research=research_entry)
-
-    When `research` is provided (Phase 1 pre-research), the web-search instructions in
-    the prompt are replaced with the pre-conducted findings so the model doesn't hallucinate
-    searches it didn't perform.
     """
 
-    DEFAULT_MODEL = "claude-sonnet-4-6"
-    API_URL = "https://api.anthropic.com/v1/messages"
+    _FALLBACK_MODEL = "claude-sonnet-4-6"
+    _MODEL_ENV_VARS = ("CLASSIFIER_MODEL", "HERMES_MODEL", "MODEL")
     MAX_TOKENS = 2048
     MAX_RETRIES = 2
 
     def __init__(self, api_key: str = None, model: str = None):
-        self.api_key = api_key or self._load_api_key()
-        self.model = model or self.DEFAULT_MODEL
+        self.model = model or self._resolve_model()
+        self.api_key = api_key or self._load_api_key(self.model)
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -560,18 +569,37 @@ class Classifier:
 
     # ── Private ───────────────────────────────────────────────────────────────
 
+    @classmethod
+    def _resolve_model(cls) -> str:
+        for var in cls._MODEL_ENV_VARS:
+            val = os.environ.get(var, "").strip()
+            if val:
+                return val
+        return cls._FALLBACK_MODEL
+
     @staticmethod
-    def _load_api_key() -> str:
-        key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if key:
-            return key
+    def _is_openrouter(model: str) -> bool:
+        return model.startswith("openrouter/")
+
+    @classmethod
+    def _load_api_key(cls, model: str) -> str:
+        env_vars = (
+            ("OPENROUTER_API_KEY",) if cls._is_openrouter(model)
+            else ("ANTHROPIC_API_KEY",)
+        )
+        for var in env_vars:
+            val = os.environ.get(var, "").strip()
+            if val:
+                return val
+        # Fall back to .env file
         env_path = os.path.join(os.path.dirname(__file__), ".env")
         if os.path.exists(env_path):
             with open(env_path) as fh:
                 for line in fh:
                     line = line.strip()
-                    if line.startswith("ANTHROPIC_API_KEY="):
-                        return line.split("=", 1)[1].strip().strip("\"'")
+                    for var in env_vars:
+                        if line.startswith(f"{var}="):
+                            return line.split("=", 1)[1].strip().strip("\"'")
         return ""
 
     @staticmethod
@@ -624,16 +652,22 @@ class Classifier:
         return prompt, searches[:6]
 
     def _call_api(self, system_prompt: str, user_prompt: str) -> str:
-        import json as _json
         import requests as _req
 
         if not self.api_key:
+            provider = "OPENROUTER_API_KEY" if self._is_openrouter(self.model) else "ANTHROPIC_API_KEY"
             raise RuntimeError(
-                "ANTHROPIC_API_KEY not set. Export it in the environment or add it to .env."
+                f"{provider} not set. Export it in the environment or add it to .env.\n"
+                f"Active model: {self.model} (set via CLASSIFIER_MODEL / HERMES_MODEL / MODEL)"
             )
 
+        if self._is_openrouter(self.model):
+            return self._call_openrouter(_req, system_prompt, user_prompt)
+        return self._call_anthropic(_req, system_prompt, user_prompt)
+
+    def _call_anthropic(self, _req, system_prompt: str, user_prompt: str) -> str:
         resp = _req.post(
-            self.API_URL,
+            "https://api.anthropic.com/v1/messages",
             headers={
                 "x-api-key": self.api_key,
                 "anthropic-version": "2023-06-01",
@@ -649,6 +683,26 @@ class Classifier:
         )
         resp.raise_for_status()
         return resp.json()["content"][0]["text"]
+
+    def _call_openrouter(self, _req, system_prompt: str, user_prompt: str) -> str:
+        resp = _req.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "content-type": "application/json",
+            },
+            json={
+                "model": self.model,
+                "max_tokens": self.MAX_TOKENS,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+            },
+            timeout=90,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
 
     @staticmethod
     def _parse_json(text: str) -> dict:
