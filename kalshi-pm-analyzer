@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""
+kalshi-pm-analyzer — Full pipeline runner for Kalshi/Polymarket analysis.
+
+USAGE:
+    ./kalshi-pm-analyzer <mode>
+
+MODES:
+    incremental | full | deep | anomaly
+    pm-incremental | pm-full | pm-deep | pm-anomaly
+
+WHAT THIS SCRIPT DOES:
+    Step 1 (automated): Runs the scan via kalshi_cron.py and writes raw candidates
+                        to batch files so research subagents have their input ready.
+    Steps 2-5 (agent):  Prints explicit instructions for the LLM agent to execute
+                        in order — research, classify, verify, finalize.
+
+No hermes_tools or any agent-runtime dependency required. Any LLM agent can follow
+the printed instructions using web search, file read/write, and terminal tools.
+"""
+
+import json
+import math
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).parent
+
+_CANDIDATES_MAP = {
+    "anomaly":        "cache/anomaly_candidates.json",
+    "pm-incremental": "cache/pm_candidates.json",
+    "pm-full":        "cache/pm_candidates.json",
+    "pm-deep":        "cache/pm_candidates.json",
+    "pm-anomaly":     "cache/pm_candidates.json",
+}
+
+VALID_MODES = [
+    "incremental", "full", "deep", "anomaly",
+    "pm-incremental", "pm-full", "pm-deep", "pm-anomaly",
+]
+
+
+def _candidates_path(mode: str) -> Path:
+    return REPO / _CANDIDATES_MAP.get(mode, "cache/candidates.json")
+
+
+def _run(cmd: list) -> None:
+    print(f"\n[kalshi-pm-analyzer] Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, cwd=REPO, text=True)
+    if result.returncode != 0:
+        print(f"[kalshi-pm-analyzer] FAILED (exit {result.returncode})")
+        sys.exit(result.returncode)
+
+
+def _n_batches(n_candidates: int) -> int:
+    if n_candidates <= 15:
+        return 1
+    if n_candidates <= 40:
+        return 2
+    return 3
+
+
+def _write_batches(candidates: list) -> list:
+    """Write raw candidate slices to cache/research_batch{N}.json. Returns [(index, count, path)]."""
+    n_batches = _n_batches(len(candidates))
+    batch_size = math.ceil(len(candidates) / n_batches)
+    written = []
+    for i in range(n_batches):
+        start = i * batch_size
+        end = min(start + batch_size, len(candidates))
+        batch = candidates[start:end]
+        if not batch:
+            continue
+        path = REPO / f"cache/research_batch{i}.json"
+        path.write_text(json.dumps(batch, indent=2))
+        written.append((i, len(batch), path))
+    return written
+
+
+def _print_instructions(mode: str, candidates: list, run_dir: str, batches: list) -> None:
+    is_anomaly = "anomaly" in mode
+    n = len(candidates)
+    classifier_prompt_fn = (
+        "get_anomaly_classifier_system_prompt()"
+        if is_anomaly
+        else "get_classifier_system_prompt()"
+    )
+
+    sep = "=" * 70
+
+    print(f"""
+{sep}
+SCAN COMPLETE — {n} candidates | mode: {mode} | run: logs/{run_dir}/
+{sep}
+
+Step 1 (scan) is done. Batch files are pre-written and ready.
+YOU (the LLM agent) must now complete Steps 2-5 IN ORDER.
+Do NOT skip steps. Do NOT parallelize research batches. Do NOT hardcode results.
+
+{sep}
+STEP 2 — RESEARCH  ({len(batches)} sequential subagents)
+{sep}
+
+Spawn one subagent per batch. Wait for it to finish before starting the next.
+
+Each subagent must:
+  1. Read its input file (raw candidates, no research yet).
+  2. For each candidate, perform web searches:
+       - Current status of the event
+       - Recent news: "[topic] news [current month year]"  (mandatory)
+       - Settlement criteria and any other relevant verification
+  3. Write the enriched JSON back to THE SAME FILE in-place.
+
+CRITICAL — preserve all original candidate fields. Only ADD the "research" key.
+Do NOT rename, remove, or simplify any existing fields (ticker, title, implied_probability,
+high_confidence_side, days_to_close, volume_anomaly, rules_primary, rules_secondary, etc.).
+
+Output schema — each entry must be the original candidate dict with one new key added:
+  {{
+    ... (all original fields preserved exactly) ...
+    "research": {{
+      "searches_performed": ["query1", "query2", ...],
+      "findings": [
+        {{"source": "<domain or outlet name>", "url": "<full URL>", "detail": "<key fact found>"}},
+        ...
+      ],
+      "summary": "<2-3 sentence summary of findings>"
+    }}
+  }}
+
+After all research batches finish, run filter_research_batch() from research_utils.py on each
+batch file to prune low-quality findings before classification:
+  from research_utils import filter_research_batch
+  import json
+  for batch_path in sorted(REPO.glob("cache/research_batch*.json")):
+      data = json.loads(batch_path.read_text())
+      market_info = {{e["ticker"]: {{"title": e.get("title",""), "rules": e.get("rules_primary","")}} for e in data}}
+      filtered = filter_research_batch(data, market_info)
+      batch_path.write_text(json.dumps(filtered, indent=2))
+
+Batches:""")
+
+    for i, count, path in batches:
+        rel = path.relative_to(REPO)
+        print(f"  Batch {i + 1}/{len(batches)}: {count} candidates -> {rel}")
+
+    print(f"""
+Also copy each finished batch to: logs/{run_dir}/research_batch{{N}}.json
+
+{sep}
+STEP 3 — CLASSIFICATION  (one LLM call per ticker — no shortcuts)
+{sep}
+
+After ALL research batches are complete:
+
+  1. Load all cache/research_batch*.json files.
+  2. For EACH candidate individually:
+       a. If candidate has no "research" key, or research.findings is empty:
+            - Log: "WARNING: no research for <ticker> — classifying as UNCLEAR"
+            - Set classification="UNCLEAR", confidence_score=0,
+              reasons=["Research was not performed or failed"],
+              confirming_signals=[], contradicting_signals=[],
+              what_would_change_this="Complete research for this ticker",
+              settlement_risk="", recent_developments="", searched_for=[]
+            - Skip the LLM call for this ticker.
+       b. Otherwise, build the classifier prompt using:
+            classifier.py:{classifier_prompt_fn}
+       c. Inject research.summary + research.findings as additional evidence.
+       d. Make ONE focused LLM call per ticker (do not batch in-context).
+       e. Call validate_classification(result) — retry if validation fails.
+  3. Collect all results into a list.
+  4. Save to BOTH:
+       cache/classified.json
+       logs/{run_dir}/classified.json
+
+PROHIBITED — stop and ask user before doing any of the following:
+  - Writing a Python file with classification results hardcoded per ticker
+  - Reasoning about all tickers in one in-context pass and saving as constants
+  - Skipping Classifier.classify() for any ticker for any reason
+
+{sep}
+STEP 4 — VERIFY
+{sep}
+
+Run after classification is saved:
+
+  python3 scripts/verify_classifications.py
+
+Downgrades hallucinated or market-contradicted CERTAIN entries to LIKELY.
+
+{sep}
+STEP 5 — FINALIZE
+{sep}
+
+Run after verification:
+
+  python3 kalshi_cron.py finalize
+
+Archives cache artifacts to logs/{run_dir}/ and exports the Excel report.
+Pipeline complete when finalize exits 0.
+{sep}
+""")
+
+
+def main() -> None:
+    if len(sys.argv) < 2 or sys.argv[1] not in VALID_MODES:
+        print("Usage: kalshi-pm-analyzer <mode>")
+        print(f"Modes: {' | '.join(VALID_MODES)}")
+        sys.exit(1)
+
+    mode = sys.argv[1]
+
+    # Step 1: scan
+    print(f"\n{'=' * 70}")
+    print(f"STEP 1 — SCAN ({mode})")
+    print(f"{'=' * 70}")
+    _run(["python3", "kalshi_cron.py", mode])
+
+    # Read candidates
+    cpath = _candidates_path(mode)
+    if not cpath.exists():
+        print(f"[kalshi-pm-analyzer] ERROR: candidate file not found: {cpath}")
+        sys.exit(1)
+    candidates = json.loads(cpath.read_text())
+    print(f"[kalshi-pm-analyzer] {len(candidates)} candidates loaded from {cpath.name}")
+
+    if not candidates:
+        print("[kalshi-pm-analyzer] No candidates. Pipeline done.")
+        sys.exit(0)
+
+    # Read run dir
+    run_ptr = REPO / "logs" / ".current_run"
+    if not run_ptr.exists():
+        print("[kalshi-pm-analyzer] ERROR: logs/.current_run not found")
+        sys.exit(1)
+    run_dir = run_ptr.read_text().strip()
+
+    # Pre-write batch files so subagents have input ready
+    batches = _write_batches(candidates)
+    print(f"[kalshi-pm-analyzer] Wrote {len(batches)} batch file(s) to cache/")
+
+    # Print instructions for steps 2-5
+    _print_instructions(mode, candidates, run_dir, batches)
+
+
+if __name__ == "__main__":
+    main()

@@ -95,10 +95,11 @@ def score_finding(finding, market_keywords):
     # Prefer URL for domain extraction if available, else source
     domain = extract_domain(url) or extract_domain(source)
     text = ' '.join([
+        finding.get('detail', ''),
         finding.get('finding', ''),
         finding.get('key_quote', ''),
         finding.get('title', ''),
-        finding.get('summary', '')
+        finding.get('summary', ''),
     ])
 
     # Domain authority

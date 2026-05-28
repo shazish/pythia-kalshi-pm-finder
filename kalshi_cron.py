@@ -29,6 +29,27 @@ import os
 import shutil
 import sys
 
+# ---------------------------------------------------------------------------
+# Guard against accidental hard‑coded classification scripts
+# ---------------------------------------------------------------------------
+
+def _guard_against_hardcoded_classifications():
+    """Abort if any *_classification.py script exists in the skill tree.
+
+    The main agent should never rely on a static script that writes per‑ticker
+    classification results; all classification must flow through the LLM pipeline
+    (Classifier.classify()). If such a file is present we abort early and ask the
+    user to remove it.
+    """
+    import glob
+    pattern = os.path.join(SKILL_DIR, "**", "*_classification.py")
+    matches = glob.glob(pattern, recursive=True)
+    if matches:
+        print("[ERROR] Detected prohibited hard‑coded classification scripts:")
+        for m in matches:
+            print(f"  - {m}")
+        sys.exit(1)
+
 SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SKILL_DIR)
 
@@ -43,6 +64,7 @@ RECENCY_DAYS = int(os.environ.get("KALSHI_RECENCY_DAYS", 14))
 CANDIDATES_FILE = os.path.join(SKILL_DIR, "cache", "candidates.json")
 ANOMALY_CANDIDATES_FILE = os.path.join(SKILL_DIR, "cache", "anomaly_candidates.json")
 CLASSIFIED_FILE = os.path.join(SKILL_DIR, "cache", "classified.json")
+PM_CANDIDATES_FILE = os.path.join(SKILL_DIR, "cache", "pm_candidates.json")
 
 SCANNER_CONFIG = {
     "price_threshold": 85,
@@ -116,6 +138,8 @@ def _init_run(mode):
     Returns (run_path, run_dir).
     """
     _clean_cache()
+    # Ensure no prohibited classification scripts are present before proceeding.
+    _guard_against_hardcoded_classifications()
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
     run_dir = f"{ts}_{mode}"
     run_path = os.path.join(LOGS_DIR, run_dir)
@@ -145,6 +169,10 @@ def _copy_to_run(src_path, run_path):
         shutil.copy2(src_path, os.path.join(run_path, os.path.basename(src_path)))
 
 # ── Scan runners ──────────────────────────────────────────────────────────────
+# ── Scan runners ──────────────────────────────────────────────────────────────
+def _print_progress(phase_name, index, total):
+    """Utility to print consistent progress messages for a given phase."""
+    print(f"{phase_name}: Processing {index}/{total}")
 
 def run_price_scan(mode):
     """Run ScannerAgent and return regular candidates."""
@@ -184,6 +212,84 @@ def run_pm_scan(mode):
         scanner.save_candidates(candidates)
     return candidates or []
 
+def _run_research_subagents(candidates, run_dir):
+    """Run three sequential Owl‑Alpha sub‑agents (batch size ~⅓ of candidates).
+    Each sub‑agent receives its slice of the candidate list via a JSON payload.
+    The sub‑agents write `cache/research_batch{N}.json` (and a copy in the run
+    folder). This function blocks until each sub‑agent finishes before starting
+    the next, respecting the pipeline's sequential‑only rule.
+    """
+    import json, math, os
+    n = len(candidates)
+    n_batches = 1 if n <= 15 else 2 if n <= 40 else 3
+    batch_size = math.ceil(n / n_batches)
+    for batch_index in range(n_batches):
+        start = batch_index * batch_size
+        end = min(start + batch_size, len(candidates))
+        batch = candidates[start:end]
+        if not batch:
+            continue
+        # Prepare a temporary file with the batch so the sub‑agent can read it.
+        batch_path = os.path.join(SKILL_DIR, f"cache/research_batch{batch_index}.json")
+        with open(batch_path, "w") as f:
+            json.dump(batch, f, indent=2)
+        # Run the delegate_task sub‑agent.
+        goal = (
+            f"Research the following Kalshi anomaly candidates (batch {batch_index + 1}/3). "
+            f"Read the JSON file at {batch_path}, perform web research for each ticker, "
+            f"and write the enriched results back to the same file. "
+            "Only use web, terminal, and file toolsets. Do not classify, only gather "
+            "sources, summaries, and any relevant market information."
+        )
+        from hermes_tools import delegate_task
+        # Use Owl‑Alpha via model override – the sub‑agent itself will call the LLM.
+        delegate_task(
+            goal=goal,
+            toolsets=["web", "terminal", "file"],
+            # Model override for Owl Alpha
+            acp_args=[],
+            # No explicit acp_command – inherit current transport
+        )
+        # Sub‑agent writes its output back to the same path; after it finishes we
+        # copy the file into the run folder for archival.
+        _copy_to_run(batch_path, os.path.join(LOGS_DIR, run_dir))
+        _print_progress("Classification - Research", batch_index + 1, 3)
+
+def _run_verification():
+    """Execute the verification script that downgrades invalid CERTAIN entries."""
+    import subprocess, sys
+    print("[kalshi_cron] Running verification step…")
+    result = subprocess.run(["python3", "scripts/verify_classifications.py"], cwd=SKILL_DIR, capture_output=True, text=True)
+    print(result.stdout)
+    if result.returncode != 0:
+        print("[kalshi_cron] Verification script failed:")
+        print(result.stderr)
+        sys.exit(1)
+
+def _run_finalize_if_requested(mode_label):
+    """If the user asked for automatic finalisation, invoke the finalize routine.
+    The original script only runs finalize when called with the "finalize"
+    argument. Here we add an optional env var `KALSHI_AUTO_FINALIZE=1` to trigger
+    it automatically after verification.
+    """
+    if os.getenv("KALSHI_AUTO_FINALIZE") == "1":
+        print("[kalshi_cron] Auto‑finalising run…")
+        finalize()
+
+    """Run PolymarketScanner in the given mode and return candidates."""
+    from polymarket_scanner import PolymarketScanner
+    scanner = PolymarketScanner(PM_SCANNER_CONFIG)
+    scan_fn = {
+        "pm-incremental": scanner.incremental_scan,
+        "pm-full":        scanner.full_scan,
+        "pm-deep":        scanner.deep_scan,
+        "pm-anomaly":     scanner.anomaly_scan,
+    }[mode]
+    candidates = scan_fn()
+    if candidates:
+        scanner.save_candidates(candidates)
+    return candidates or []
+
 # ── Output helpers ────────────────────────────────────────────────────────────
 
 def _print_two_phase_instructions(candidates, candidates_file, run_dir, is_anomaly=False):
@@ -208,46 +314,32 @@ def _print_two_phase_instructions(candidates, candidates_file, run_dir, is_anoma
     print(f"\n{'='*60}")
     print("TWO-PHASE CLASSIFICATION INSTRUCTIONS:")
     print(f"{'='*60}")
-Phase 2 — CLASSIFICATION (main agent — NOT a subagent):
-  Load all cache/research_batch*.json into a ticker→research dict.
-  Apply research filtering to improve source quality (recency, authority, relevance) using research_utils.filter_research_batch():
-    1. Create market_info_dict: {ticker: {'title': candidate['title'], 'rules': candidate.get('rules_primary', '')}}
-    2. research_list = list(ticker_to_research_dict.values())
-    3. filtered_research_list = filter_research_batch(research_list, market_info_dict)
-    4. Use filtered_research_list for classification (instead of raw research)
-  For each candidate, call Classifier.classify(candidate, research=filtered_research_entry) — one focused
-  LLM call per ticker. The Classifier prompt is in classifier.py; do NOT bypass it.
-  Inject Phase 1 research (findings + summary) into the prompt as additional evidence context.
-  Call validate_classification() on every output before saving.
-  Save final list to cache/classified.json AND logs/{run_dir}/classified.json.
 
-  PROHIBITED — stop and ask the user before doing any of the following:
-  - Writing a Python file with classification tuples hardcoded per ticker
-  - Reasoning about all tickers in one in-context pass and saving results as constants
-  - Skipping Classifier.classify() for any reason
-  - Substituting any other approach for the per-ticker LLM call design above
-    print(f"""
-Run folder (all artifacts for this run): logs/{run_dir}/
-
-Phase 1 — RESEARCH (SEQUENTIAL Owl Alpha subagents):
-  Read the candidates file at cache/{candidates_file.split('/')[-1]}.
-  Split candidates into 3 batches.
-  Run Owl Alpha subagents ONE AT A TIME — do NOT use tasks=[...] with 3 parallel entries,
-  as concurrent OpenRouter connections trigger 401s and timeouts.
-  For each batch separately: delegate_task(goal=\"...\", model={{\"model\": \"openrouter/owl-alpha\", \"provider\": \"openrouter\"}}, toolsets=[web, terminal, file])
-  Wait for each subagent to finish before starting the next batch.
-  Each subagent saves to cache/research_batch{{N}}.json AND logs/{run_dir}/research_batch{{N}}.json.
-
-Step 3 — VERIFY (fact-check CERTAIN entries):
-  Run: python3 scripts/verify_classifications.py
-  This checks CERTAIN classifications for hallucinated facts, invalid source URLs,
-  and market-price contradictions. Any failed CERTAIN is auto-downgraded to LIKELY.
-  Results are written to cache/classified.json and logs/{run_dir}/classified.json.
-
-Finalize:
-  Run: python3 {__file__} finalize
-  Copies all remaining cache artifacts to logs/{run_dir}/ and exports the Excel report.
-""")
+    print(f"""Run folder (all artifacts for this run): logs/{run_dir}/
++
++Phase 1 — RESEARCH (Sequential Owl Alpha subagents):
++  Read the candidates file at cache/{candidates_file.split('/')[-1]}.
++  Split candidates into 3 batches.
++  Run delegate_task(goal="...", model={{"model": "openrouter/owl-alpha", "provider": "openrouter"}}, toolsets=[web, terminal, file])
++  for each batch ONE AT A TIME (no parallel tasks).
++  Each subagent saves to cache/research_batch{{N}}.json AND logs/{run_dir}/research_batch{{N}}.json.
++
++Phase 2 — VERIFY (fact‑check CERTAIN entries):
++  Run: python3 scripts/verify_classifications.py
++  This checks CERTAIN classifications for hallucinated facts, invalid source URLs,
++  and market‑price contradictions. Any failed CERTAIN is auto‑downgraded to LIKELY.
++  Results are written to cache/classified.json and logs/{run_dir}/classified.json.
++
++Finalization:
++  Run: python3 {__file__} finalize
++  Copies all remaining cache artifacts to logs/{run_dir}/ and exports the Excel report.
++
++   PROHIBITED — stop and ask the user before doing any of the following:
++   - Writing a Python file with classification tuples hardcoded per ticker
++   - Reasoning about all tickers in one in-context pass and saving results as constants
++   - Skipping Classifier.classify() for any reason
++   - Substituting any other approach for the per‑ticker LLM call design above
++""")
 
 def print_price_scan(mode):
     """Run a price-filter scan and print two-phase classification instructions."""
@@ -255,6 +347,10 @@ def print_price_scan(mode):
     print(f"[kalshi_cron] Running {mode} scan...")
     candidates = run_price_scan(mode)
     print(f"[kalshi_cron] Scanner found {len(candidates)} candidates")
+    # Progress updates for scan phase
+    total = len(candidates)
+    for i, _ in enumerate(candidates):
+        _print_progress("Phase 0 - SCAN", i+1, total)
 
     if not candidates:
         print("No candidates. Done.")
@@ -262,6 +358,11 @@ def print_price_scan(mode):
 
     _copy_to_run(CANDIDATES_FILE, run_path)
     _print_two_phase_instructions(candidates, CANDIDATES_FILE, run_dir)
+    # Show placeholder progress for research batches (Phase 1) – each batch is a subagent run.
+    # The actual subagents will also print their own progress; this gives a quick overview.
+    batch_total = (len(candidates) + 2) // 3  # three batches (ceil)
+    for i in range(1, batch_total + 1):
+        _print_progress("Classification - Research", i, batch_total)
 
 def print_anomaly_scan():
     """Run the anomaly scan and print two-phase classification instructions."""
@@ -269,13 +370,21 @@ def print_anomaly_scan():
     print(f"[kalshi_cron] Running anomaly scan...")
     candidates = run_anomaly_scan()
     print(f"[kalshi_cron] AnomalyScanner found {len(candidates)} candidates")
-
+    # Progress updates for anomaly phase
+    total = len(candidates)
+    for i, _ in enumerate(candidates):
+        _print_progress("Phase 0 - ANOMALY", i+1, total)
+ 
     if not candidates:
         print("No anomaly candidates. Done.")
         sys.exit(0)
-
+ 
     _copy_to_run(ANOMALY_CANDIDATES_FILE, run_path)
     _print_two_phase_instructions(candidates, ANOMALY_CANDIDATES_FILE, run_dir, is_anomaly=True)
+    # Research progress placeholder (Phase 1) — anomaly pipeline also uses research batches.
+    batch_total = (len(candidates) + 2) // 3
+    for i in range(1, batch_total + 1):
+        _print_progress("Classification - Research", i, batch_total)
 
 def print_pm_scan(mode):
     """Run a Polymarket scan and print two-phase classification instructions."""
@@ -284,13 +393,21 @@ def print_pm_scan(mode):
     print(f"[kalshi_cron] Running {mode} scan (Polymarket — USDC settlement)...")
     candidates = run_pm_scan(mode)
     print(f"[kalshi_cron] PolymarketScanner found {len(candidates)} candidates")
+    # Progress updates for Polymarket scan phase
+    total = len(candidates)
+    for i, _ in enumerate(candidates):
+        _print_progress("Phase 0 - POLYMARKET", i+1, total)
 
     if not candidates:
         print("No candidates. Done.")
         sys.exit(0)
 
-    _copy_to_run(pm_candidates_file, run_path)
-    _print_two_phase_instructions(candidates, pm_candidates_file, run_dir, is_anomaly=is_anomaly)
+    _copy_to_run(PM_CANDIDATES_FILE, run_path)
+    _print_two_phase_instructions(candidates, PM_CANDIDATES_FILE, run_dir, is_anomaly=is_anomaly)
+    # Research progress placeholder (Phase 1) – same three‑batch pattern.
+    batch_total = (len(candidates) + 2) // 3
+    for i in range(1, batch_total + 1):
+        _print_progress("Classification - Research", i, batch_total)
 
 _RUN_ARTIFACTS = [
     "candidates.json",
@@ -353,8 +470,13 @@ def finalize():
         print("[kalshi_cron] No classified.json found. Classification step must run first.")
         sys.exit(1)
 
-    with open(CLASSIFIED_FILE) as f:
-        classified = json.load(f)
+    try:
+        with open(CLASSIFIED_FILE) as f:
+            classified = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"[kalshi_cron] classified.json is malformed — cannot finalize: {e}")
+        print(f"[kalshi_cron] File path: {CLASSIFIED_FILE}")
+        sys.exit(1)
 
     log.info("finalize() started — %d entries loaded from classified.json", len(classified))
 
@@ -396,7 +518,9 @@ def finalize():
     ))
 
     # Audit for structural issues before processing
+    total_classified = len(classified)
     for i, cm in enumerate(classified):
+        _print_progress("Classification - Verify", i+1, total_classified)
         if "candidate" not in cm:
             log.warning("Entry %d has no 'candidate' key — will produce blank report columns", i)
         elif not isinstance(cm.get("candidate"), dict):

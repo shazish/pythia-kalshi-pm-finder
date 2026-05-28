@@ -38,8 +38,15 @@ HALLUCINATION_PATTERNS = [
 
 def verify_certain_classification(entry):
     """Check a CERTAIN classification for hallucinated claims."""
-    c = entry['candidate']
-    cl = entry['classification']
+    # Handle both old format (nested) and new format (flat)
+    if 'candidate' in entry and 'classification' in entry:
+        c = entry.get('candidate', {})
+        cl = entry.get('classification', {})
+    else:
+        # New flat format - use entry directly
+        c = entry
+        cl = entry
+    
     issues = []
     
     ticker = c.get('ticker', '')
@@ -91,12 +98,26 @@ def main():
     print(f"Verifying {len(results)} classifications...")
     downgrades = 0
     
-    for entry in results:
-        c = entry.get('candidate', {})
-        cl = entry.get('classification', {})
+    total = len(results)
+    for idx, entry in enumerate(results, 1):
+        # Handle both old format (nested) and new format (flat)
+        if 'candidate' in entry and 'classification' in entry:
+            c = entry.get('candidate', {})
+            cl = entry.get('classification', {})
+        else:
+            # New flat format - use entry directly
+            c = entry
+            cl = entry
+        
         ticker = c.get('ticker', '?')
         
-        if cl.get('classification') == 'CERTAIN':
+        if isinstance(cl, dict):
+            cl_class = cl.get('classification')
+        else:
+            cl_class = cl
+            
+        print(f"Classification - Verify: Processing {idx}/{total}")
+        if cl_class == "CERTAIN":
             issues = verify_certain_classification(entry)
             
             if issues:
@@ -129,8 +150,7 @@ def main():
         shutil.copy2(classified_cache, os.path.join(run_path, 'classified.json'))
 
     certain = sum(1 for r in results
-                  if isinstance(r, dict) and isinstance(r.get('classification'), dict)
-                  and r['classification'].get('classification') == 'CERTAIN')
+                  if isinstance(r.get('classification'), str) and r.get('classification') == 'CERTAIN')
     print(f"\nVerification complete: {downgrades} downgraded, {certain} CERTAIN remaining")
 
 if __name__ == '__main__':

@@ -221,10 +221,13 @@ def _write_sheet(ws, col_defs, rows, title):
             row_fill = _row_fill(cls)
             row_font = _row_font(cls)
 
-        for col_idx, (_, _, extractor) in enumerate(col_defs, start=1):
+        for col_idx, (col_name, _, extractor) in enumerate(col_defs, start=1):
             try:
                 value = extractor(record)
-            except Exception:
+            except Exception as exc:
+                import sys as _sys
+                ticker = record.get("candidate", {}).get("ticker", "?")
+                print(f"[excel_reporter] WARNING: cell extraction failed — ticker={ticker} col={col_name}: {exc}", file=_sys.stderr)
                 value = ""
             cell = ws.cell(row=row_idx, column=col_idx, value=value)
             cell.fill = row_fill
