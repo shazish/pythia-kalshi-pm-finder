@@ -23,6 +23,7 @@ import json
 import math
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).parent
@@ -148,6 +149,22 @@ Batches:""")
     print(f"""
 Also copy each finished batch to: logs/{run_dir}/research_batch{{N}}.json
 
+After EACH batch completes, append its result to the run log:
+  python3 -c "
+  from pipeline_run_log import RunLog
+  log = RunLog.for_current_run()
+  if log:
+      log.step_research_batch(
+          batch_index=<N>,
+          n_tickers=<count>,
+          duration_s=<seconds>,
+          issues=[<list any tickers with empty findings or missing research>],
+          n_filtered=<findings removed by filter_research_batch>,
+      )
+  "
+After ALL batches finish, also run:
+  python3 -c "from pipeline_run_log import RunLog; log = RunLog.for_current_run(); log and log.step_research_complete()"
+
 {sep}
 STEP 3 — CLASSIFICATION  (one LLM call per ticker — no shortcuts)
 {sep}
@@ -173,6 +190,24 @@ After ALL research batches are complete:
   4. Save to BOTH:
        cache/classified.json
        logs/{run_dir}/classified.json
+
+After saving classified.json, write the classification summary to the run log:
+  python3 -c "
+  from pipeline_run_log import RunLog
+  import json
+  results = json.loads(open('cache/classified.json').read())
+  counts = {{'CERTAIN': 0, 'LIKELY': 0, 'UNCLEAR': 0}}
+  n_failed, n_empty, issues = 0, 0, []
+  for r in results:
+      cl = r.get('classification', r) if isinstance(r.get('classification'), dict) else r
+      c = counts.get(cl.get('classification', ''))
+      if c is not None: counts[cl.get('classification')] += 1
+      if not cl.get('_valid', True): n_failed += 1; issues.append(r.get('candidate',r).get('ticker','?') + ': validation failed')
+      if cl.get('classification') == 'UNCLEAR' and 'Research was not performed' in str(cl.get('reasons','')): n_empty += 1
+  log = RunLog.for_current_run()
+  if log:
+      log.step_classification(len(results), counts['CERTAIN'], counts['LIKELY'], counts['UNCLEAR'], n_failed, n_empty, issues[:10])
+  "
 
 PROHIBITED — stop and ask user before doing any of the following:
   - Writing a Python file with classification results hardcoded per ticker
@@ -215,7 +250,9 @@ def main() -> None:
     print(f"\n{'=' * 70}")
     print(f"STEP 1 — SCAN ({mode})")
     print(f"{'=' * 70}")
+    t0 = time.time()
     _run(["python3", "kalshi_cron.py", mode])
+    scan_duration = time.time() - t0
 
     # Read candidates
     cpath = _candidates_path(mode)
@@ -239,6 +276,17 @@ def main() -> None:
     # Pre-write batch files so subagents have input ready
     batches = _write_batches(candidates)
     print(f"[kalshi-pm-analyzer] Wrote {len(batches)} batch file(s) to cache/")
+
+    # Write run log header + step 1
+    try:
+        from pipeline_run_log import RunLog
+        run_log = RunLog.for_current_run()
+        if run_log:
+            run_log.write_header(mode, run_dir)
+            run_log.step_scan(mode, len(candidates), scan_duration, batches, cpath.name)
+            print(f"[kalshi-pm-analyzer] Run log: logs/{run_dir}/pipeline_run.md")
+    except Exception as e:
+        print(f"[kalshi-pm-analyzer] WARNING: could not write run log: {e}")
 
     # Print instructions for steps 2-5
     _print_instructions(mode, candidates, run_dir, batches)

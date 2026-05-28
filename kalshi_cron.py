@@ -567,6 +567,24 @@ def finalize():
     # ── Archive remaining cache artifacts ──────────────────────────────────
     _archive_run(result_path, run_path, run_dir)
 
+    # Write step 5 to run log before clearing the pointer
+    try:
+        from pipeline_run_log import RunLog
+        run_log = RunLog.for_current_run()
+        if run_log:
+            routing_summary = {
+                "Opportunities notified": len(to_notify),
+                "Logged to dashboard": len(to_log),
+            }
+            run_log.step_finalize(
+                n_entries=len(classified),
+                report_path=f"logs/{run_dir}/{excel_basename}",
+                routing_summary=routing_summary,
+                errors=[],
+            )
+    except Exception as _rle:
+        log.warning("Could not write run log step 5: %s", _rle)
+
     # Clear the pointer — this run is complete
     try:
         os.remove(CURRENT_RUN_POINTER)

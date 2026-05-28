@@ -94,10 +94,16 @@ def main():
     # Load the merged classified.json (already normalized)
     with open('/home/shaah/kalshi-tracker/cache/classified.json') as f:
         results = json.load(f)
-    
+
     print(f"Verifying {len(results)} classifications...")
     downgrades = 0
-    
+    downgrade_details = []
+
+    n_certain_before = sum(
+        1 for r in results
+        if (r.get('classification', {}) if isinstance(r.get('classification'), dict) else r).get('classification') == 'CERTAIN'
+    )
+
     total = len(results)
     for idx, entry in enumerate(results, 1):
         # Handle both old format (nested) and new format (flat)
@@ -108,18 +114,18 @@ def main():
             # New flat format - use entry directly
             c = entry
             cl = entry
-        
+
         ticker = c.get('ticker', '?')
-        
+
         if isinstance(cl, dict):
             cl_class = cl.get('classification')
         else:
             cl_class = cl
-            
+
         print(f"Classification - Verify: Processing {idx}/{total}")
         if cl_class == "CERTAIN":
             issues = verify_certain_classification(entry)
-            
+
             if issues:
                 print(f"🔴 {ticker}: {len(issues)} issue(s)")
                 for iss in issues:
@@ -136,9 +142,10 @@ def main():
                 # Re-validate
                 cl = validate_classification(cl)
                 downgrades += 1
+                downgrade_details.append({'ticker': ticker, 'reasons': issues})
             else:
                 print(f"🟢 {ticker}: passed verification")
-    
+
     # Save verified results back to cache
     classified_cache = '/home/shaah/kalshi-tracker/cache/classified.json'
     with open(classified_cache, 'w') as f:
@@ -149,9 +156,18 @@ def main():
     if run_path:
         shutil.copy2(classified_cache, os.path.join(run_path, 'classified.json'))
 
-    certain = sum(1 for r in results
-                  if isinstance(r.get('classification'), str) and r.get('classification') == 'CERTAIN')
-    print(f"\nVerification complete: {downgrades} downgraded, {certain} CERTAIN remaining")
+    n_certain_after = n_certain_before - downgrades
+    print(f"\nVerification complete: {downgrades} downgraded, {n_certain_after} CERTAIN remaining")
+
+    # Write step 4 to run log
+    try:
+        sys.path.insert(0, KALSHI_DIR)
+        from pipeline_run_log import RunLog
+        run_log = RunLog.for_current_run()
+        if run_log:
+            run_log.step_verify(n_certain_before, downgrades, downgrade_details, n_certain_after)
+    except Exception as e:
+        print(f"[verify] WARNING: could not write run log: {e}")
 
 if __name__ == '__main__':
     main()
