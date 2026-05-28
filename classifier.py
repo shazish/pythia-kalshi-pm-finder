@@ -477,6 +477,209 @@ def _extract_metric_keywords(rules: str) -> list:
     return accepted_forms
 
 
+# ── Classifier (LLM caller) ───────────────────────────────────────────────────
+
+class Classifier:
+    """
+    Calls the Anthropic API once per ticker and returns a validated classification dict.
+
+    Usage:
+        clf = Classifier()                          # reads ANTHROPIC_API_KEY from env/.env
+        result = clf.classify(candidate, research=research_entry)
+
+    When `research` is provided (Phase 1 pre-research), the web-search instructions in
+    the prompt are replaced with the pre-conducted findings so the model doesn't hallucinate
+    searches it didn't perform.
+    """
+
+    DEFAULT_MODEL = "claude-sonnet-4-6"
+    API_URL = "https://api.anthropic.com/v1/messages"
+    MAX_TOKENS = 2048
+    MAX_RETRIES = 2
+
+    def __init__(self, api_key: str = None, model: str = None):
+        self.api_key = api_key or self._load_api_key()
+        self.model = model or self.DEFAULT_MODEL
+
+    # ── Public ────────────────────────────────────────────────────────────────
+
+    def classify(self, candidate: dict, research: dict = None, recency_days: int = 14) -> dict:
+        """
+        Classify one candidate. Returns a validated classification dict.
+
+        Args:
+            candidate:    candidate dict (from candidates.json / research_batch*.json)
+            research:     research entry dict (research_batch output). When provided,
+                          web-search instructions are replaced with pre-conducted findings.
+            recency_days: window for the mandatory recency search instruction.
+        """
+        is_anomaly = (
+            candidate.get("candidate_type") == "anomaly"
+            or "anomaly_evidence" in candidate
+        )
+
+        if is_anomaly:
+            system_prompt = get_anomaly_classifier_system_prompt(recency_days)
+            user_prompt = build_anomaly_prompt(candidate, recency_days)
+        else:
+            system_prompt = get_classifier_system_prompt(recency_days)
+            user_prompt = build_regular_prompt(candidate, recency_days)
+
+        pre_searched: list = []
+        if research:
+            user_prompt, pre_searched = self._inject_research(user_prompt, research)
+
+        rules = candidate.get("rules_primary", "")
+
+        for attempt in range(self.MAX_RETRIES):
+            raw = self._call_api(system_prompt, user_prompt)
+            result = self._parse_json(raw)
+
+            # If LLM didn't populate searched_for from the pre-research list, backfill it
+            # so the >= 3 validation check passes.
+            if pre_searched and len(result.get("searched_for", [])) < 3:
+                result["searched_for"] = (result.get("searched_for", []) + pre_searched)[:max(3, len(pre_searched))]
+
+            validated = validate_classification(result, rules)
+
+            # Only retry if CERTAIN failed validation — LIKELY/UNCLEAR are fine as-is.
+            if (
+                attempt < self.MAX_RETRIES - 1
+                and not validated.get("_valid")
+                and validated.get("classification") == "CERTAIN"
+            ):
+                errs = "; ".join(validated.get("_validation_errors", []))
+                user_prompt += (
+                    f"\n\nPREVIOUS ATTEMPT FAILED VALIDATION: {errs}. "
+                    "Fix the issues above or downgrade to LIKELY."
+                )
+                continue
+            break
+
+        return validated
+
+    # ── Private ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _load_api_key() -> str:
+        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        if key:
+            return key
+        env_path = os.path.join(os.path.dirname(__file__), ".env")
+        if os.path.exists(env_path):
+            with open(env_path) as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line.startswith("ANTHROPIC_API_KEY="):
+                        return line.split("=", 1)[1].strip().strip("\"'")
+        return ""
+
+    @staticmethod
+    def _inject_research(prompt: str, research: dict):
+        """
+        Replace the 'Instructions: 1. Perform web searches…' block with pre-conducted
+        research findings. Returns (modified_prompt, searches_performed_list).
+        """
+        findings = research.get("findings", [])
+        summary = research.get("summary", "")
+        searches = research.get("searches_performed", [])
+
+        lines = ["RESEARCH CONDUCTED (Phase 1 pre-research — do not repeat these searches):"]
+        if summary:
+            lines.append(f"Summary: {summary}")
+        if searches:
+            lines.append(f"Searches performed: {'; '.join(searches[:6])}")
+        if findings:
+            lines.append("Key findings:")
+            for i, f in enumerate(findings[:6], 1):
+                fact = f.get("detail") or f.get("key_quote") or f.get("finding") or ""
+                url = f.get("url") or f.get("source_url") or ""
+                src = f.get("source", "")
+                entry = f"  {i}. {fact}"
+                if url:
+                    entry += f"  [source: {url}]"
+                elif src:
+                    entry += f"  [source: {src}]"
+                lines.append(entry)
+        else:
+            lines.append("  No findings were recorded during Phase 1 research.")
+
+        research_block = "\n".join(lines)
+
+        replacement = (
+            f"{research_block}\n\n"
+            "NOTE: Research above was conducted in Phase 1. Do NOT perform additional web searches.\n"
+            "Classify based on the provided evidence. Populate all required JSON fields:\n"
+            "  - searched_for: use the search queries listed above\n"
+            "  - recent_developments: summarise the recency-relevant findings above\n"
+            "  - confirming_signals / contradicting_signals: derive from the findings\n"
+            "Output the structured JSON as specified."
+        )
+
+        if "Instructions:" in prompt:
+            prompt = prompt[: prompt.index("Instructions:")] + replacement
+        else:
+            prompt = prompt + "\n\n" + replacement
+
+        return prompt, searches[:6]
+
+    def _call_api(self, system_prompt: str, user_prompt: str) -> str:
+        import json as _json
+        import requests as _req
+
+        if not self.api_key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY not set. Export it in the environment or add it to .env."
+            )
+
+        resp = _req.post(
+            self.API_URL,
+            headers={
+                "x-api-key": self.api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json={
+                "model": self.model,
+                "max_tokens": self.MAX_TOKENS,
+                "system": system_prompt,
+                "messages": [{"role": "user", "content": user_prompt}],
+            },
+            timeout=90,
+        )
+        resp.raise_for_status()
+        return resp.json()["content"][0]["text"]
+
+    @staticmethod
+    def _parse_json(text: str) -> dict:
+        import json as _json
+        # 1. Raw parse
+        try:
+            return _json.loads(text.strip())
+        except _json.JSONDecodeError:
+            pass
+        # 2. Strip markdown fences
+        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if m:
+            try:
+                return _json.loads(m.group(1))
+            except _json.JSONDecodeError:
+                pass
+        # 3. First {...} block
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        if m:
+            try:
+                return _json.loads(m.group(0))
+            except _json.JSONDecodeError:
+                pass
+        raise ValueError(f"Cannot parse JSON from classifier response: {text[:300]!r}")
+
+
+def classify(candidate: dict, research: dict = None, **kwargs) -> dict:
+    """Module-level convenience wrapper. Creates a Classifier and calls .classify()."""
+    return Classifier(**kwargs).classify(candidate, research=research)
+
+
 # ── CLI test ──────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
