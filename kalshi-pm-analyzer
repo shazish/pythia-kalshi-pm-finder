@@ -248,12 +248,23 @@ After retry completes (or is skipped), proceed to Step 3.
 {sep}
 STEP 3 — CLASSIFICATION  (one call per ticker — no shortcuts)
 {sep}
-
-After ALL research batches are complete:
+""" + (f"""
+⚠️  API KEY REQUIRED: This run uses --model {model_override}.
+    The Classifier class calls the external API. You MUST have the correct API
+    key set (ANTHROPIC_API_KEY or OPENROUTER_API_KEY). If the key is missing,
+    STOP NOW and ask the user to set it — do NOT substitute heuristics.
+""" if model_override else f"""
+⚠️  NO API KEY NEEDED: This run has no --model flag.
+    YOU (Hermes) are the classifier. You reason about each ticker in-context
+    using your current model. The Classifier class is NOT called. No external
+    API key is required. If you think you need one, re-read this section.
+""") + f"""
+After ALL research batches and retries are complete:
 
   1. Load all cache/research_batch*.json files.
   2. For EACH candidate individually:
-       a. If candidate has no "research" key, or research.findings is empty:
+       a. If candidate has no "research" key, or research.findings is empty,
+          or research.search_status is "search_failed":
             - Log: "WARNING: no research for <ticker> — classifying as UNCLEAR"
             - Set classification="UNCLEAR", confidence_score=0,
               reasons=["Research was not performed or failed"],
@@ -264,7 +275,6 @@ After ALL research batches are complete:
        b. Otherwise:""" + (f"""
             Use Classifier(model="{model_override}") to classify via external API:
               from classifier import Classifier
-              from classifier import validate_classification
               clf = Classifier(model="{model_override}")
               result = clf.classify(candidate, research=research_entry)
               # validate_classification() is called inside clf.classify()""" if model_override else f"""
@@ -274,7 +284,7 @@ After ALL research batches are complete:
               iii.Append to user prompt: the research summary and findings from step 1
                   (replace the "Instructions: 1. Perform web searches" block with
                    the pre-conducted research findings — same as _inject_research() does)
-              iv. Reason and output the JSON schema defined in the system prompt.
+              iv. Reason about this specific ticker and output the JSON schema.
               v.  Run:  python3 -c "
                     from classifier import validate_classification
                     import json
@@ -310,6 +320,9 @@ PROHIBITED — stop and ask user before doing any of the following:
   - Writing a Python file with classification results hardcoded per ticker
   - Reasoning about all tickers in one in-context pass and saving as constants
   - Skipping individual per-ticker classification for any reason
+  - Using heuristic scoring (days-to-close, finding count, or any non-LLM proxy) as a
+    substitute for per-ticker in-context reasoning — this is NOT acceptable even when
+    API keys are missing; STOP and ask the user instead
 
 {sep}
 STEP 4 — VERIFY
