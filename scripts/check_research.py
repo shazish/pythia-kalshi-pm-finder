@@ -14,8 +14,10 @@ import sys
 from pathlib import Path
 
 CONSECUTIVE_FAIL_THRESHOLD = 3
+RETRY_CHUNK_SIZE = 15   # keep below observed ~17-search per-session limit
 REPO = Path(__file__).parent.parent
 RETRY_PATH = REPO / "cache" / "research_retry.json"
+RETRY_CHUNKS_PATH = REPO / "cache" / "research_retry_chunks.json"
 
 
 def check_batch(batch_path: Path) -> dict:
@@ -62,7 +64,14 @@ def check_batch(batch_path: Path) -> dict:
         and e.get("ticker") not in existing_tickers
     ]
     if new_retries:
-        RETRY_PATH.write_text(json.dumps(existing + new_retries, indent=2))
+        all_retries = existing + new_retries
+        RETRY_PATH.write_text(json.dumps(all_retries, indent=2))
+        # Rewrite chunks every time the queue grows
+        chunks = [
+            all_retries[i:i + RETRY_CHUNK_SIZE]
+            for i in range(0, len(all_retries), RETRY_CHUNK_SIZE)
+        ]
+        RETRY_CHUNKS_PATH.write_text(json.dumps(chunks, indent=2))
 
     return {"ok": ok, "empty": empty, "failed": failed, "n_retries": len(new_retries)}
 
@@ -86,7 +95,8 @@ def main():
     if RETRY_PATH.exists():
         queue = json.loads(RETRY_PATH.read_text())
         if queue:
-            print(f"[check_research] Total retry queue: {len(queue)} entries")
+            chunks = json.loads(RETRY_CHUNKS_PATH.read_text()) if RETRY_CHUNKS_PATH.exists() else []
+            print(f"[check_research] Total retry queue: {len(queue)} entries → {len(chunks)} chunk(s) of ≤{RETRY_CHUNK_SIZE}")
 
 
 if __name__ == "__main__":

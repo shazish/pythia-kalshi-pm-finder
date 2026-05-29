@@ -194,34 +194,68 @@ STEP 2.5 — RETRY FAILED SEARCHES  (skip if cache/research_retry.json absent or
   import json
   from pathlib import Path
   p = Path('cache/research_retry.json')
+  cp = Path('cache/research_retry_chunks.json')
   q = json.loads(p.read_text()) if p.exists() else []
-  print(f'Retry queue: {{len(q)}} entries')
-  for e in q: print(f'  {{e[\"ticker\"]}} ({{e[\"batch\"]}}) — {{e[\"title\"][:60]}}')
+  chunks = json.loads(cp.read_text()) if cp.exists() else []
+  print(f'Retry queue: {{len(q)}} entries in {{len(chunks)}} chunk(s)')
+  for i, chunk in enumerate(chunks):
+      print(f'  Chunk {{i}}: {{len(chunk)}} entries')
   "
 
-If retry queue is non-empty, spawn ONE retry subagent:
+If retry queue is non-empty, read cache/research_retry_chunks.json.
+Spawn ONE subagent per chunk, SEQUENTIALLY (wait for each before starting the next).
+Each chunk subagent must follow this protocol EXACTLY:
 
-  The retry subagent MUST:
-  1. Verify search works first: search for "breaking news today" or similar.
-       - If search returns 0 results, halt immediately and report:
-           "SEARCH TOOL UNAVAILABLE — retry skipped. Proceed to Step 3.
-            All search_failed entries will be classified as UNCLEAR."
-       - Do NOT attempt to research any tickers if the verification search fails.
-  2. For each ticker in cache/research_retry.json:
-       a. Load the entry from its batch file (use the "batch" field to find it).
-       b. Perform fresh research — 3 searches:
-            - Current status of the event
-            - "[topic] news [current month year]"
-            - Settlement criteria
-       c. Update ONLY the "research" key in-place in the batch file.
-          Set search_status="ok" if findings found, "empty" if still none.
-       d. Do NOT touch any other fields.
-  3. After all retries, delete cache/research_retry.json.
-  4. Re-run filter on any updated batch files:
-       python3 scripts/check_research.py cache/research_batch<N>.json
-       (for each batch that had retries)
+  ── SEARCH METHOD DETECTION (do this first, before any ticker research) ──
 
-After retry subagent completes (or is skipped), proceed to Step 3.
+  Step A: Test the primary search tool.
+    Search for: "latest news today"
+    If this returns results → PRIMARY SEARCH IS WORKING. Use it for all tickers.
+    If this returns 0 results → PRIMARY SEARCH IS RATE-LIMITED OR BROKEN.
+      Switch to FALLBACK MODE for this chunk (see below).
+
+  ── PRIMARY MODE (search tool working) ──
+
+  For each ticker in this chunk:
+    1. Load the entry from its batch file (use "batch" field in chunk entry).
+    2. Run 3 searches:
+         - Current status of the event
+         - "[topic] news [current month year]"
+         - Settlement criteria / how Kalshi resolves this market
+    3. If findings found: update research in-place, set search_status="ok"
+    4. If still 0 findings: set search_status="empty"
+    5. If 3+ consecutive zeros appear: STOP. Switch to FALLBACK MODE for remaining tickers.
+
+  ── FALLBACK MODE (search tool unavailable or rate-limited) ──
+
+  Do NOT use the search API. Instead, for each remaining ticker in this chunk:
+    1. Load entry from its batch file.
+    2. Use the browser/fetch tool to retrieve pages directly:
+         - Fetch: https://news.google.com/search?q=<url-encoded topic>
+         - Fetch: https://www.reuters.com/search/news?blob=<url-encoded topic>
+         - Fetch: the market's own Kalshi page if URL is known
+    3. Extract relevant facts from the fetched pages.
+    4. Write findings using the same schema (source, url, detail).
+    5. Set search_status="ok" if findings found, "empty" if none.
+    If the browser/fetch tool is also unavailable, set search_status="search_failed"
+    and stop — do not continue.
+
+  ── AFTER EACH CHUNK ──
+
+  Update the original batch file (cache/research_batch<N>.json) in-place.
+  Run health check on each updated batch:
+    python3 scripts/check_research.py cache/research_batch<N>.json
+  Copy updated batch to: logs/{run_dir}/research_batch<N>.json
+
+After ALL chunks complete (or are skipped), clean up:
+  python3 -c "
+  from pathlib import Path
+  Path('cache/research_retry.json').unlink(missing_ok=True)
+  Path('cache/research_retry_chunks.json').unlink(missing_ok=True)
+  print('Retry queue cleared')
+  "
+
+After retry completes (or is skipped), proceed to Step 3.
 
 {sep}
 STEP 3 — CLASSIFICATION  (one call per ticker — no shortcuts)
