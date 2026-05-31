@@ -3,15 +3,17 @@
 kalshi-pm-analyzer — Full pipeline runner for Kalshi/Polymarket analysis.
 
 USAGE:
-    ./kalshi-pm-analyzer <mode>
+    ./kalshi-pm-analyzer <mode> [--model MODEL]
+    ./kalshi-pm-analyzer finalize
+    ./kalshi-pm-analyzer backtest
 
 MODES:
     incremental | full | deep | anomaly
     pm-incremental | pm-full | pm-deep | pm-anomaly
 
 WHAT THIS SCRIPT DOES:
-    Step 1 (automated): Runs the scan via kalshi_cron.py and writes raw candidates
-                        to batch files so research subagents have their input ready.
+    Step 1 (automated): Runs the scan and writes raw candidates to batch files
+                        so research subagents have their input ready.
     Steps 2-5 (agent):  Prints explicit instructions for the LLM agent to execute
                         in order — research, classify, verify, finalize.
 
@@ -19,14 +21,62 @@ No hermes_tools or any agent-runtime dependency required. Any LLM agent can foll
 the printed instructions using web search, file read/write, and terminal tools.
 """
 
+import datetime
+import glob
 import json
 import math
+import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 REPO = Path(__file__).parent
+SKILL_DIR = str(REPO)
+sys.path.insert(0, SKILL_DIR)
+
+RECENCY_DAYS = int(os.environ.get("KALSHI_RECENCY_DAYS", 14))
+
+CANDIDATES_FILE      = str(REPO / "cache" / "candidates.json")
+ANOMALY_CANDIDATES_FILE = str(REPO / "cache" / "anomaly_candidates.json")
+CLASSIFIED_FILE      = str(REPO / "cache" / "classified.json")
+PM_CANDIDATES_FILE   = str(REPO / "cache" / "pm_candidates.json")
+LOGS_DIR             = str(REPO / "logs")
+CURRENT_RUN_POINTER  = str(REPO / "logs" / ".current_run")
+
+SCANNER_CONFIG = {
+    "price_threshold": 85,
+    "deep_scan_threshold": 80,
+    "spread_max": 3,
+    "min_volume": 50,
+    "deep_spread_min_volume": 200,
+    "price_change_threshold": 3,
+    "candidates_file": CANDIDATES_FILE,
+    "cache_file": str(REPO / "cache" / "market_cache.json"),
+}
+
+ANOMALY_CONFIG = {
+    "min_price": 20,
+    "max_price": 79,
+    "min_implied_hc_dollars": 10000,
+    "min_volume": 500,
+    "min_hc_ratio": 1.5,
+    "candidates_file": ANOMALY_CANDIDATES_FILE,
+    "cache_file": str(REPO / "cache" / "anomaly_cache.json"),
+}
+
+PM_SCANNER_CONFIG = {
+    "price_threshold":        85,
+    "deep_scan_threshold":    80,
+    "spread_max":             5,
+    "min_volume":             1000,
+    "anomaly_min_price":      20,
+    "anomaly_max_price":      79,
+    "min_implied_hc_dollars": 10000,
+    "candidates_file":        PM_CANDIDATES_FILE,
+    "cache_file":             str(REPO / "cache" / "pm_cache.json"),
+}
 
 _CANDIDATES_MAP = {
     "anomaly":        "cache/anomaly_candidates.json",
@@ -41,17 +91,298 @@ VALID_MODES = [
     "pm-incremental", "pm-full", "pm-deep", "pm-anomaly",
 ]
 
+_CACHE_DIR = str(REPO / "cache")
+
+_PERSISTENT_CACHE = {
+    "market_cache.json",
+    "anomaly_cache.json",
+}
+
+_RUN_ARTIFACTS = [
+    "candidates.json",
+    "anomaly_candidates.json",
+    "classified.json",
+    "classified_remaining.json",
+    "anomaly_cache.json",
+    "market_percentages.json",
+    "claude_review_output.txt",
+    "claude_vs_me_comparison.md",
+    "classification_review.txt",
+    "verified_classified.json",
+]
+
+_RUN_ARTIFACT_GLOBS = [
+    "research_batch*.json",
+    "research_single_*.json",
+]
+
+
+# ── Guards ────────────────────────────────────────────────────────────────────
+
+def _guard_against_hardcoded_classifications():
+    pattern = os.path.join(SKILL_DIR, "**", "*_classification.py")
+    matches = glob.glob(pattern, recursive=True)
+    if matches:
+        print("[ERROR] Detected prohibited hard-coded classification scripts:")
+        for m in matches:
+            print(f"  - {m}")
+        sys.exit(1)
+
+
+# ── Entry helpers ─────────────────────────────────────────────────────────────
+
+def make_classified_entry(candidate: dict, classification: dict) -> dict:
+    """Build a classified.json entry that preserves the FULL candidate dict."""
+    return {
+        "candidate": dict(candidate),
+        "classification": classification,
+    }
+
+
+# ── Cache management ──────────────────────────────────────────────────────────
+
+def _clean_cache():
+    if not os.path.isdir(_CACHE_DIR):
+        return
+    deleted = []
+    for name in os.listdir(_CACHE_DIR):
+        if name in _PERSISTENT_CACHE:
+            continue
+        path = os.path.join(_CACHE_DIR, name)
+        if os.path.isfile(path):
+            os.remove(path)
+            deleted.append(name)
+    if deleted:
+        print(f"[kalshi-pm-analyzer] Cleaned {len(deleted)} stale artifact(s) from cache/")
+
+
+# ── Run-folder management ─────────────────────────────────────────────────────
+
+def _init_run(mode):
+    _clean_cache()
+    _guard_against_hardcoded_classifications()
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    run_dir = f"{ts}_{mode}"
+    run_path = os.path.join(LOGS_DIR, run_dir)
+    os.makedirs(run_path, exist_ok=True)
+    with open(CURRENT_RUN_POINTER, "w") as f:
+        f.write(run_dir)
+    print(f"[kalshi-pm-analyzer] Run folder: logs/{run_dir}/")
+    return run_path, run_dir
+
+
+def _get_current_run():
+    if not os.path.exists(CURRENT_RUN_POINTER):
+        return None, None
+    with open(CURRENT_RUN_POINTER) as f:
+        run_dir = f.read().strip()
+    run_path = os.path.join(LOGS_DIR, run_dir)
+    if os.path.isdir(run_path):
+        return run_path, run_dir
+    return None, None
+
+
+def _copy_to_run(src_path, run_path):
+    if os.path.exists(src_path):
+        shutil.copy2(src_path, os.path.join(run_path, os.path.basename(src_path)))
+
+
+def _print_progress(phase_name, index, total):
+    print(f"{phase_name}: Processing {index}/{total}")
+
+
+# ── Scan runners ──────────────────────────────────────────────────────────────
+
+def run_price_scan(mode):
+    from scanner import ScannerAgent
+    scanner = ScannerAgent(SCANNER_CONFIG)
+    scan_fn = {
+        "incremental": scanner.incremental_scan,
+        "full":        scanner.full_scan,
+        "deep":        scanner.deep_scan,
+    }[mode]
+    candidates = scan_fn()
+    if candidates:
+        scanner.save_candidates(candidates)
+    return candidates or []
+
+
+def run_anomaly_scan():
+    from anomaly_scanner import AnomalyScanner
+    scanner = AnomalyScanner(ANOMALY_CONFIG)
+    candidates = scanner.scan()
+    if candidates:
+        scanner.save_candidates(candidates)
+    return candidates or []
+
+
+def run_pm_scan(mode):
+    from polymarket_scanner import PolymarketScanner
+    scanner = PolymarketScanner(PM_SCANNER_CONFIG)
+    scan_fn = {
+        "pm-incremental": scanner.incremental_scan,
+        "pm-full":        scanner.full_scan,
+        "pm-deep":        scanner.deep_scan,
+        "pm-anomaly":     scanner.anomaly_scan,
+    }[mode]
+    candidates = scan_fn()
+    if candidates:
+        scanner.save_candidates(candidates)
+    return candidates or []
+
+
+# ── Archive ───────────────────────────────────────────────────────────────────
+
+def _archive_run(excel_path, run_path, run_dir):
+    copied = 0
+    for name in _RUN_ARTIFACTS:
+        src = os.path.join(SKILL_DIR, "cache", name)
+        if os.path.exists(src):
+            dst = os.path.join(run_path, name)
+            if not os.path.exists(dst) or os.path.getmtime(src) > os.path.getmtime(dst):
+                shutil.copy2(src, dst)
+                copied += 1
+    for pattern in _RUN_ARTIFACT_GLOBS:
+        for src in sorted(glob.glob(os.path.join(SKILL_DIR, "cache", pattern))):
+            dst = os.path.join(run_path, os.path.basename(src))
+            if not os.path.exists(dst) or os.path.getmtime(src) > os.path.getmtime(dst):
+                shutil.copy2(src, dst)
+                copied += 1
+    excel_basename = os.path.basename(excel_path)
+    excel_in_run = os.path.join(run_path, excel_basename)
+    if excel_path != excel_in_run and os.path.exists(excel_path):
+        shutil.move(excel_path, excel_in_run)
+    print(f"[kalshi-pm-analyzer] Archived run → logs/{run_dir}/  ({copied} cache artifacts + Excel)")
+    return run_dir
+
+
+# ── Finalize ──────────────────────────────────────────────────────────────────
+
+def finalize():
+    from pipeline_logger import get_logger
+    from classifier import validate_classification
+    log = get_logger("kalshi-pm-analyzer")
+
+    if not os.path.exists(CLASSIFIED_FILE):
+        log.error("No classified.json found at %s. Classification step must run first.", CLASSIFIED_FILE)
+        print("[kalshi-pm-analyzer] No classified.json found. Classification step must run first.")
+        sys.exit(1)
+
+    try:
+        with open(CLASSIFIED_FILE) as f:
+            classified = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"[kalshi-pm-analyzer] classified.json is malformed — cannot finalize: {e}")
+        sys.exit(1)
+
+    log.info("finalize() started — %d entries loaded from classified.json", len(classified))
+
+    _SCAN_TYPE_MAP = {
+        "deep_scan":           "deep",
+        "deep_spread_scan":    "deep",
+        "full_scan":           "full",
+        "incremental_scan":    "incremental",
+        "anomaly_scan":        "anomaly",
+        "pm_deep_scan":        "pm-deep",
+        "pm_full_scan":        "pm-full",
+        "pm_incremental_scan": "pm-incremental",
+        "pm_anomaly_scan":     "pm-anomaly",
+        "backtest":            "backtest",
+    }
+    _scan_types = [
+        cm.get("candidate", {}).get("scan_type", "")
+        for cm in classified
+        if isinstance(cm.get("candidate"), dict)
+    ]
+    _non_empty = [st for st in _scan_types if st]
+    if _non_empty:
+        from collections import Counter
+        _most_common = Counter(_non_empty).most_common(1)[0][0]
+    else:
+        _most_common = ""
+    mode_label = _SCAN_TYPE_MAP.get(_most_common, "finalize")
+
+    _type_order = {k: i for i, k in enumerate(reversed(list(_SCAN_TYPE_MAP.keys())))}
+    classified.sort(key=lambda cm: _type_order.get(
+        cm.get("candidate", {}).get("scan_type", ""), 999
+    ))
+
+    total_classified = len(classified)
+    for i, cm in enumerate(classified):
+        _print_progress("Classification - Verify", i + 1, total_classified)
+        if "candidate" not in cm:
+            log.warning("Entry %d has no 'candidate' key — will produce blank report columns", i)
+        elif not isinstance(cm.get("candidate"), dict):
+            log.warning("Entry %d 'candidate' is %s, not dict", i, type(cm["candidate"]).__name__)
+        elif not cm.get("candidate", {}).get("series_ticker"):
+            log.debug("Entry %d (%s) missing series_ticker", i,
+                      cm.get("candidate", {}).get("ticker", "?"))
+
+    for cm in classified:
+        if "classification" in cm and isinstance(cm["classification"], dict):
+            candidate_rules = cm.get("candidate", {}).get("rules_primary", "")
+            cm["classification"] = validate_classification(cm["classification"], rules=candidate_rules)
+
+    from opportunity_manager import OpportunityManager
+    from excel_reporter import export_excel
+    mgr = OpportunityManager()
+    to_notify, to_log = mgr.process(classified)
+
+    if to_log:
+        n = mgr.log_to_dashboard(to_log)
+        log.info("Logged %d entries to dashboard", n)
+        print(f"[kalshi-pm-analyzer] Logged {n} entries to dashboard")
+
+    if to_notify:
+        log.info("Reporting %d opportunities", len(to_notify))
+        print(f"\n[kalshi-pm-analyzer] {len(to_notify)} OPPORTUNITIES:")
+        for opp in to_notify:
+            print("\n" + mgr.format_notification(opp))
+    else:
+        log.info("No opportunities above threshold")
+        print("[kalshi-pm-analyzer] No opportunities above threshold.")
+
+    run_path, run_dir = _get_current_run()
+    if run_path is None:
+        run_path, run_dir = _init_run(mode_label)
+        log.warning("No .current_run pointer found; created fallback run folder: logs/%s/", run_dir)
+
+    excel_basename = f"{run_dir}.xlsx"
+    excel_path = os.path.join(LOGS_DIR, excel_basename)
+    result_path = export_excel(to_notify, to_log, excel_path, mode_label=mode_label)
+
+    _archive_run(result_path, run_path, run_dir)
+
+    try:
+        from pipeline_run_log import RunLog
+        run_log = RunLog.for_current_run()
+        if run_log:
+            routing_summary = {
+                "Opportunities notified": len(to_notify),
+                "Logged to dashboard":   len(to_log),
+            }
+            run_log.step_finalize(
+                n_entries=len(classified),
+                report_path=f"logs/{run_dir}/{excel_basename}",
+                routing_summary=routing_summary,
+                errors=[],
+            )
+    except Exception as _rle:
+        log.warning("Could not write run log step 5: %s", _rle)
+
+    try:
+        os.remove(CURRENT_RUN_POINTER)
+    except OSError:
+        pass
+
+    log.info("Report saved → logs/%s/", run_dir)
+    print(f"\n[kalshi-pm-analyzer] Run complete → logs/{run_dir}/")
+
+
+# ── Batch writing ─────────────────────────────────────────────────────────────
 
 def _candidates_path(mode: str) -> Path:
     return REPO / _CANDIDATES_MAP.get(mode, "cache/candidates.json")
-
-
-def _run(cmd: list) -> None:
-    print(f"\n[kalshi-pm-analyzer] Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=REPO, text=True)
-    if result.returncode != 0:
-        print(f"[kalshi-pm-analyzer] FAILED (exit {result.returncode})")
-        sys.exit(result.returncode)
 
 
 def _n_batches(n_candidates: int) -> int:
@@ -78,6 +409,8 @@ def _write_batches(candidates: list) -> list:
         written.append((i, len(batch), path))
     return written
 
+
+# ── Instruction printing ──────────────────────────────────────────────────────
 
 def _print_instructions(mode: str, candidates: list, run_dir: str, batches: list, model_override: str = None) -> None:
     is_anomaly = "anomaly" in mode
@@ -258,11 +591,23 @@ STEP 3 — CLASSIFICATION  (one call per ticker — no shortcuts)
     YOU (Hermes) are the classifier. You reason about each ticker in-context
     using your current model. The Classifier class is NOT called. No external
     API key is required. If you think you need one, re-read this section.
-""") + f"""
+""") + (f"""
 After ALL research batches and retries are complete:
 
-  1. Load all cache/research_batch*.json files.
-  2. For EACH candidate individually:
+  Run the standalone classification script (handles checkpointing and retries):
+    python3 scripts/classify_all.py --run-dir {run_dir} --model {model_override}
+
+  This calls Classifier(model="{model_override}") once per ticker, saves after each
+  candidate, and resumes from where it left off if interrupted. Runtime ~60-90 min
+  for ~150 candidates. Wait for it to complete before proceeding to Step 4.
+
+  Results saved to:
+    cache/classified.json
+    logs/{run_dir}/classified.json
+""" if model_override else f"""
+After ALL research batches and retries are complete:
+
+  For EACH candidate individually:
        a. If candidate has no "research" key, or research.findings is empty,
           or research.search_status is "search_failed":
             - Log: "WARNING: no research for <ticker> — classifying as UNCLEAR"
@@ -272,12 +617,7 @@ After ALL research batches and retries are complete:
               what_would_change_this="Complete research for this ticker",
               settlement_risk="", recent_developments="", searched_for=[]
             - Skip the classification call for this ticker.
-       b. Otherwise:""" + (f"""
-            Use Classifier(model="{model_override}") to classify via external API:
-              from classifier import Classifier
-              clf = Classifier(model="{model_override}")
-              result = clf.classify(candidate, research=research_entry)
-              # validate_classification() is called inside clf.classify()""" if model_override else f"""
+       b. Otherwise:
             YOU (Hermes) classify this ticker directly using your current model:
               i.  Get system prompt:  classifier.py:{classifier_prompt_fn}
               ii. Get user prompt:    classifier.py:build_{'anomaly' if is_anomaly else 'regular'}_prompt(candidate)
@@ -291,13 +631,14 @@ After ALL research batches and retries are complete:
                     result = <your JSON output as a dict>
                     validated = validate_classification(result, rules=candidate.get('rules_primary',''))
                     print(json.dumps(validated, indent=2))
-                    " """) + """
-  3. Collect all results into a list in this format:
+                    "
+
+  Collect all results into a list in this format:
        {{"candidate": <original candidate dict>, "classification": <validated classification dict>}}
-  4. Save to BOTH:
+  Save to BOTH:
        cache/classified.json
        logs/{run_dir}/classified.json
-
+""") + f"""
 After saving classified.json, write the classification summary to the run log:
   python3 -c "
   from pipeline_run_log import RunLog
@@ -340,7 +681,7 @@ STEP 5 — FINALIZE
 
 Run after verification:
 
-  python3 kalshi_cron.py finalize
+  python3 kalshi-pm-analyzer finalize
 
 Archives cache artifacts to logs/{run_dir}/ and exports the Excel report.
 Pipeline complete when finalize exits 0.
@@ -348,8 +689,20 @@ Pipeline complete when finalize exits 0.
 """)
 
 
+# ── Main ──────────────────────────────────────────────────────────────────────
+
 def main() -> None:
     args = sys.argv[1:]
+
+    if args and args[0] == "finalize":
+        finalize()
+        return
+
+    if args and args[0] == "backtest":
+        from backtest import run as backtest_run
+        backtest_run()
+        return
+
     model_override = None
     if "--model" in args:
         idx = args.index("--model")
@@ -361,9 +714,11 @@ def main() -> None:
 
     if not args or args[0] not in VALID_MODES:
         print("Usage: kalshi-pm-analyzer <mode> [--model MODEL]")
+        print("       kalshi-pm-analyzer finalize")
+        print("       kalshi-pm-analyzer backtest")
         print(f"Modes: {' | '.join(VALID_MODES)}")
-        print("  --model MODEL  Use a specific model for classification (e.g. claude-opus-4-7,")
-        print("                 openrouter/nvidia/nemotron-70b). Default: Hermes classifies directly.")
+        print("  --model MODEL  Use a specific model for classification (e.g. openrouter/owl-alpha).")
+        print("                 Default: Hermes classifies in-context, no external API key needed.")
         sys.exit(1)
 
     mode = args[0]
@@ -373,31 +728,28 @@ def main() -> None:
     print(f"STEP 1 — SCAN ({mode})")
     print(f"{'=' * 70}")
     t0 = time.time()
-    _run(["python3", "kalshi_cron.py", mode])
-    scan_duration = time.time() - t0
-    print(f"\n{'=' * 70}")
-    print("[kalshi-pm-analyzer] IGNORE any instructions printed above by kalshi_cron.py.")
-    print("[kalshi-pm-analyzer] Your pipeline instructions are below.")
-    print(f"{'=' * 70}")
 
-    # Read candidates
-    cpath = _candidates_path(mode)
-    if not cpath.exists():
-        print(f"[kalshi-pm-analyzer] ERROR: candidate file not found: {cpath}")
-        sys.exit(1)
-    candidates = json.loads(cpath.read_text())
-    print(f"[kalshi-pm-analyzer] {len(candidates)} candidates loaded from {cpath.name}")
+    run_path, run_dir = _init_run(mode)
+
+    print(f"[kalshi-pm-analyzer] Running {mode} scan...")
+    if mode == "anomaly":
+        candidates = run_anomaly_scan()
+        cand_file = ANOMALY_CANDIDATES_FILE
+    elif mode.startswith("pm-"):
+        candidates = run_pm_scan(mode)
+        cand_file = PM_CANDIDATES_FILE
+    else:
+        candidates = run_price_scan(mode)
+        cand_file = CANDIDATES_FILE
+
+    scan_duration = time.time() - t0
+    print(f"[kalshi-pm-analyzer] Scanner found {len(candidates)} candidates")
 
     if not candidates:
         print("[kalshi-pm-analyzer] No candidates. Pipeline done.")
         sys.exit(0)
 
-    # Read run dir
-    run_ptr = REPO / "logs" / ".current_run"
-    if not run_ptr.exists():
-        print("[kalshi-pm-analyzer] ERROR: logs/.current_run not found")
-        sys.exit(1)
-    run_dir = run_ptr.read_text().strip()
+    _copy_to_run(cand_file, run_path)
 
     # Pre-write batch files so subagents have input ready
     batches = _write_batches(candidates)
@@ -409,7 +761,7 @@ def main() -> None:
         run_log = RunLog.for_current_run()
         if run_log:
             run_log.write_header(mode, run_dir)
-            run_log.step_scan(mode, len(candidates), scan_duration, batches, cpath.name)
+            run_log.step_scan(mode, len(candidates), scan_duration, batches, Path(cand_file).name)
             print(f"[kalshi-pm-analyzer] Run log: logs/{run_dir}/pipeline_run.md")
     except Exception as e:
         print(f"[kalshi-pm-analyzer] WARNING: could not write run log: {e}")

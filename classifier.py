@@ -501,7 +501,7 @@ class Classifier:
         result = clf.classify(candidate, research=research_entry)
     """
 
-    _FALLBACK_MODEL = "claude-sonnet-4-6"
+    _FALLBACK_MODEL = "openrouter/owl-alpha"
     _MODEL_ENV_VARS = ("CLASSIFIER_MODEL", "HERMES_MODEL", "MODEL")
     MAX_TOKENS = 2048
     MAX_RETRIES = 2

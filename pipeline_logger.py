@@ -1,4 +1,4 @@
-"""Minimal pipeline logger for kalshi_cron finalize step."""
+"""Minimal pipeline logger for kalshi-pm-analyzer finalize step."""
 import logging, os
 
 def get_logger(name="kalshi"):

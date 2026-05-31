@@ -8,7 +8,7 @@
 2. Phase 1: 3× Owl Alpha subagents research the anomaly candidates via `delegate_task`
 3. Phase 2: Main agent reads research and classifies with `validate_classification()`
 4. Save directly to `cache/classified.json` (no copy step needed)
-5. `python3 kalshi_cron.py finalize`
+5. `python3 kalshi-pm-analyzer finalize`
 
 **Why the change:** The programmatic batch script used rule-based heuristics with no web research. The two-phase approach does real web research via free Owl Alpha subagents, producing evidence-backed classifications with source URLs. Total time: ~3 min for 56 candidates.
 

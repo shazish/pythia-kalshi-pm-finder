@@ -119,7 +119,7 @@ The merge script must handle both. Detect the format by checking if `entry.get('
 ### Steps
 
 1. Merge results_batch{0,1,2}.json into cache/classified.json (with ticker-lookup fix)
-2. Run: `cd ~/kalshi-tracker && python3 kalshi_cron.py finalize`
+2. Run: `cd ~/kalshi-tracker && python3 kalshi-pm-analyzer finalize`
 3. Produce CSV: read classified.json, write logs/kalshi_{timestamp}.csv
 
 ## Validation Rules (from classifier.py validate_classification)

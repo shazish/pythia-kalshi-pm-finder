@@ -190,7 +190,7 @@ cache/classified_anomaly.json   ← classification output (56 results)
          ↓
 cp → cache/classified.json      ← must copy BEFORE finalize
          ↓
-python3 kalshi_cron.py finalize ← produces Excel report
+python3 kalshi-pm-analyzer finalize ← produces Excel report
 ```
 
 ### CRITICAL: classified_anomaly.json vs classified.json
@@ -200,7 +200,7 @@ The finalize step (`kalshi_cron.finalize()`) reads from `cache/classified.json`,
 ```bash
 cd ~/kalshi-tracker
 cp cache/classified_anomaly.json cache/classified.json
-python3 kalshi_cron.py finalize
+python3 kalshi-pm-analyzer finalize
 ```
 
 If there's an existing `classified.json` with regular scan classifications, merge them:

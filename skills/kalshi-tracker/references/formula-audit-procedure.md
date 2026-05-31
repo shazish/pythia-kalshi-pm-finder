@@ -95,7 +95,7 @@ If you found something Claude Code missed:
    - Exact fix (code snippet)
    - Impact assessment
    - Lesson for future
-3. Run regression: `python3 kalshi_cron.py finalize` — verify no Kalshi-side regressions
+3. Run regression: `python3 kalshi-pm-analyzer finalize` — verify no Kalshi-side regressions
 
 ## Common Failure Patterns
 
@@ -109,5 +109,5 @@ If you found something Claude Code missed:
 ## Tool-Specific Tips
 
 - **`execute_code`**: Best for running the imports + manual calculations. Has sandbox access to files via `sys.path.insert(0, ...)`.
-- **`terminal`**: Best for running `python3 kalshi_cron.py finalize` since it uses system python which has openpyxl for Excel export.
+- **`terminal`**: Best for running `python3 kalshi-pm-analyzer finalize` since it uses system python which has openpyxl for Excel export.
 - **`claude -p`**: Print mode is ideal for one-shot code review. Pipe files to stdin. Set `--max-turns 3` to keep it focused. Budget ~$1-2.

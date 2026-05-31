@@ -22,7 +22,7 @@ high-certainty betting opportunities.
           │
           ▼
 ┌───────────────────────────────┐
-│ kalshi_cron.py [mode]        │  prints TWO-PHASE instructions
+│ kalshi-pm-analyzer [mode]    │  runs scan + prints pipeline instructions
 │ (entry point for all modes)  │  (script is the single source of truth)
 └──────────────┬───────────────┘
                │
@@ -69,7 +69,7 @@ high-certainty betting opportunities.
 
 | File | Purpose |
 |------|---------|
-| `kalshi_cron.py` | **Single entry point** for all modes. Prints two-phase instructions after scanning. |
+| `kalshi-pm-analyzer` | **Single entry point** for all modes. Runs scan and prints pipeline instructions. |
 | `scanner.py` | Scanner — category filtering (now includes Health, Finance), combo detection, caching |
 | `anomaly_scanner.py` | Volume-first smart-money anomaly scanner |
 | `polymarket_scanner.py` | Polymarket scanner (USDC settlement) |
@@ -92,7 +92,7 @@ high-certainty betting opportunities.
 cd ~/kalshi-tracker
 
 # 1. Scan + print instructions
-python3 kalshi_cron.py [mode]
+python3 kalshi-pm-analyzer [mode]
 
 # mode: incremental | full | deep | anomaly | pm-incremental | pm-full | pm-deep | pm-anomaly
 
@@ -124,7 +124,7 @@ python3 kalshi_cron.py [mode]
 #    Wikipedia is NOT a settlement source
 
 # 6. Finalize → Excel + CSV
-python3 kalshi_cron.py finalize
+python3 kalshi-pm-analyzer finalize
 
 ⚠ If finalize crashes with ModuleNotFoundError for pipeline_logger, the file was likely
    deleted during cleanup. See references/pitfalls.md #42 for the minimal replacement.
@@ -173,7 +173,7 @@ Without this fix, the opportunity manager computes 0% edge (no `implied_probabil
 
 8 jobs, all paused. The cron prompt for each is simply:
 ```
-cd ~/kalshi-tracker && python3 kalshi_cron.py [mode]
+cd ~/kalshi-tracker && python3 kalshi-pm-analyzer [mode]
 ```
 Follow the printed TWO-PHASE CLASSIFICATION INSTRUCTIONS.
 

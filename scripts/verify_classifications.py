@@ -146,10 +146,12 @@ def main():
             else:
                 print(f"🟢 {ticker}: passed verification")
 
-    # Save verified results back to cache
+    # Save verified results back to cache (atomic write)
     classified_cache = '/home/shaah/kalshi-tracker/cache/classified.json'
-    with open(classified_cache, 'w') as f:
+    tmp = classified_cache + '.tmp'
+    with open(tmp, 'w') as f:
         json.dump(results, f, indent=2)
+    os.replace(tmp, classified_cache)
 
     # Mirror to run folder if one is active
     run_path = _get_run_path()

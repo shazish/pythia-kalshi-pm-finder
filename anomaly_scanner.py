@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
     "min_volume": 500,                    # raw volume floor
     "max_spread": 10,                     # wider spread allowed than primary scanner
     "max_pages": 20,
-    "min_hc_ratio": 1.0,               # minimum HC-to-opposite implied dollar ratio; overridden to 1.5 in kalshi_cron.py
+    "min_hc_ratio": 1.0,               # minimum HC-to-opposite implied dollar ratio; overridden to 1.5 in kalshi-pm-analyzer
     "scan_categories": ["Politics", "Economics", "Entertainment", "Weather", "World", "Elections", "Health", "Finance"],
     "cache_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/anomaly_cache.json"),
     "candidates_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/anomaly_candidates.json"),
