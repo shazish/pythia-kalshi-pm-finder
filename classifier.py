@@ -42,8 +42,9 @@ CRITICAL RULES:
 3. Search 2: Recent news — you MUST search for "[topic] news [current month and year]" or "[topic] update [current month]". This catches late-breaking developments that could invalidate an apparently obvious outcome. Do not skip this.
 4. Search 3+: Settlement criteria and any other relevant verification.
 5. Look for CONFIRMING signals (facts that support the high-confidence side) and CONTRADICTING signals (facts that argue against it).
+   CONTRADICTING signals must be real-world evidence that genuinely challenges the outcome — not theoretical possibilities, mathematical edge cases with negligible real-world probability, or hypothetical "could technically happen" scenarios. Examples of what does NOT qualify: "the count could theoretically change", "methodology could differ", "future events are uncertain". Examples of what DOES qualify: a data release showing the wrong value, a news report contradicting the expected outcome, a court ruling that changes the resolution criteria.
 6. Classify as CERTAIN only when the outcome is a near-mathematical certainty based on current real-world knowledge.
-7. If ANY contradicting signal exists, you MUST downgrade from CERTAIN to LIKELY.
+7. If ANY real contradicting signal exists, you MUST downgrade from CERTAIN to LIKELY. If you have no real contradicting signals, leave contradicting_signals as an empty list — do NOT populate it with hypothetical scenarios to "be safe".
 8. Always consider settlement risk: could {platform}'s settlement mechanism rule differently than expected?
 
 METRIC VERIFICATION (mandatory for economic/data-driven markets):
@@ -81,18 +82,24 @@ OUTPUT SCHEMA:
   "high_confidence_side": "YES | NO",
   "reasons": ["reason 1", "reason 2", "reason 3"],
   "confirming_signals": [
-    {{"fact": "...", "source_url": "..."}},
-    {{"fact": "...", "source_url": "..."}},
-    {{"fact": "...", "source_url": "..."}}
+    {{"fact": "...", "source_url": "https://actual-url.com/article"}},
+    {{"fact": "...", "source_url": "https://actual-url.com/article"}},
+    {{"fact": "...", "source_url": "https://actual-url.com/article"}}
   ],
   "contradicting_signals": [
-    {{"fact": "...", "source_url": "..."}}
+    {{"fact": "...", "source_url": "https://actual-url.com/article"}}
   ],
   "what_would_change_this": "Description of what scenario or evidence would make you wrong",
   "settlement_risk": "Any scenario where the obvious outcome could settle incorrectly, or empty string if none",
   "recent_developments": "What your recency search found -- any news in the past {recency_days} days relevant to this outcome. Write 'None found' only if the recency search returned nothing relevant.",
   "searched_for": ["query 1", "query 2", "query 3 (recency search)"]
 }}
+
+CRITICAL — source_url field:
+- source_url MUST be a full https:// URL copied exactly from the research findings provided to you.
+- Do NOT write descriptive text (e.g. "Kalshi settlement rules", "General knowledge", "Reuters").
+- If a finding has no URL, use empty string "" — never fabricate a URL or write a non-URL description.
+- Every confirming_signal and contradicting_signal that cites a finding MUST use that finding's exact URL.
 
 VALIDATION RULES (enforced after your output):
 - classification == "CERTAIN" requires len(reasons) >= 3
@@ -133,6 +140,7 @@ CRITICAL RULES:
 3. Search 2: Recent news (MANDATORY recency) -- "[topic] news [current month year]". Volume often front-runs public news.
 4. Search 3+: Why might someone have large conviction here? Settlement criteria, upcoming catalysts.
 5. If the volume is explainable by hedging, market-making, or a known public event, say so in contradicting_signals and downgrade to LIKELY/UNCLEAR.
+   CONTRADICTING signals must be real-world evidence — not theoretical possibilities or hypothetical edge cases. A contradicting signal must be something that actually challenges the outcome, not something that "could theoretically" happen. If you have no real contradicting signals, leave contradicting_signals as an empty list.
 6. If you cannot find ANY reason to justify the accumulation, treat "unexplained smart money" as a mild confirming signal, not a red flag.
 7. Factor in the DAYS TO CLOSE: near-term anomalies (< 14 days) with high volume are stronger signals than far-horizon ones. Smart money is more likely to be informed about imminent events.
 
@@ -157,16 +165,22 @@ OUTPUT SCHEMA:
   "high_confidence_side": "YES | NO",
   "reasons": ["reason 1", "reason 2", "reason 3"],
   "confirming_signals": [
-    {{"fact": "...", "source_url": "..."}}
+    {{"fact": "...", "source_url": "https://actual-url.com/article"}}
   ],
   "contradicting_signals": [
-    {{"fact": "...", "source_url": "..."}}
+    {{"fact": "...", "source_url": "https://actual-url.com/article"}}
   ],
   "what_would_change_this": "Description of what scenario or evidence would make you wrong",
   "settlement_risk": "Any scenario where the obvious outcome could settle incorrectly, or empty string if none",
   "recent_developments": "What your recency search found — any news in the past {recency_days} days relevant to this market. Write 'None found' only if the recency search returned nothing relevant.",
   "searched_for": ["query 1", "query 2", "query 3 (recency search)"]
 }}
+
+CRITICAL — source_url field:
+- source_url MUST be a full https:// URL copied exactly from the research findings provided to you.
+- Do NOT write descriptive text (e.g. "Kalshi settlement rules", "General knowledge", "Reuters").
+- If a finding has no URL, use empty string "" — never fabricate a URL or write a non-URL description.
+- Every confirming_signal and contradicting_signal that cites a finding MUST use that finding's exact URL.
 
 VALIDATION RULES (same as regular classifier — enforced after your output):
 - classification == "CERTAIN" requires len(reasons) >= 3
@@ -625,9 +639,9 @@ class Classifier:
                 src = f.get("source", "")
                 entry = f"  {i}. {fact}"
                 if url:
-                    entry += f"  [source: {url}]"
+                    entry += f"  [url: {url}]"
                 elif src:
-                    entry += f"  [source: {src}]"
+                    entry += f"  [domain: {src} — no full URL available, use source_url: \"\"]"
                 lines.append(entry)
         else:
             lines.append("  No findings were recorded during Phase 1 research.")
@@ -640,7 +654,10 @@ class Classifier:
             "Classify based on the provided evidence. Populate all required JSON fields:\n"
             "  - searched_for: use the search queries listed above\n"
             "  - recent_developments: summarise the recency-relevant findings above\n"
-            "  - confirming_signals / contradicting_signals: derive from the findings\n"
+            "  - confirming_signals / contradicting_signals: derive from the findings above.\n"
+            "    IMPORTANT: for each signal, copy the EXACT https:// URL shown in [url: URL] into\n"
+            "    the source_url field. Do NOT write text descriptions in source_url.\n"
+            "    Findings marked [domain: ...] have no full URL — use source_url: \"\" for those.\n"
             "Output the structured JSON as specified."
         )
 
@@ -713,8 +730,8 @@ class Classifier:
             return _json.loads(text.strip())
         except _json.JSONDecodeError:
             pass
-        # 2. Strip markdown fences
-        m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        # 2. Strip markdown fences — greedy inner match to capture full nested JSON
+        m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
         if m:
             try:
                 return _json.loads(m.group(1))

@@ -120,12 +120,32 @@ _RUN_ARTIFACT_GLOBS = [
 # ── Guards ────────────────────────────────────────────────────────────────────
 
 def _guard_against_hardcoded_classifications():
-    pattern = os.path.join(SKILL_DIR, "**", "*_classification.py")
-    matches = glob.glob(pattern, recursive=True)
-    if matches:
-        print("[ERROR] Detected prohibited hard-coded classification scripts:")
-        for m in matches:
+    search_dirs = [
+        (SKILL_DIR, "**", "*_classification.py"),
+        (str(REPO / "tmp"), "**", "*.py"),
+        (str(REPO / "tmp"), "**", "*.json"),
+    ]
+    matches = []
+    for base, *rest in search_dirs:
+        if os.path.isdir(base):
+            matches.extend(glob.glob(os.path.join(base, *rest), recursive=True))
+    # Filter tmp/ hits to only files that contain hardcoded classification dicts
+    filtered = []
+    for m in matches:
+        if SKILL_DIR in m and m.endswith("_classification.py"):
+            filtered.append(m)
+        elif str(REPO / "tmp") in m:
+            try:
+                content = open(m).read()
+                if '"classification"' in content and ('"CERTAIN"' in content or '"LIKELY"' in content or '"UNCLEAR"' in content):
+                    filtered.append(m)
+            except OSError:
+                pass
+    if filtered:
+        print("[ERROR] Detected prohibited hard-coded classification scripts or data:")
+        for m in filtered:
             print(f"  - {m}")
+        print("  Delete these files and re-run classify_all.py instead.")
         sys.exit(1)
 
 

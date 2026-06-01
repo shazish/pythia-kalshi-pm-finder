@@ -20,7 +20,7 @@ Writes:
 
 Skips already-classified tickers on restart.
 """
-import sys, os, json, time, glob, copy, argparse, shutil, re, traceback
+import sys, os, json, time, glob, copy, argparse, shutil, re, traceback, atexit
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -78,6 +78,20 @@ if not run_dir:
 
 CLASSIFIED_FILE = REPO / "cache" / "classified.json"
 LOG_CLASSIFIED  = (REPO / "logs" / run_dir / "classified.json") if run_dir else None
+LOCK_FILE       = REPO / "cache" / "classify_all.lock"
+
+# ── Lockfile: abort if another instance is already running ────────────────────
+if LOCK_FILE.exists():
+    age = time.time() - LOCK_FILE.stat().st_mtime
+    print(
+        f"[classify_all] ABORT — lockfile exists ({LOCK_FILE}), modified {age:.0f}s ago.\n"
+        f"  Another classify_all.py process may be running. If it is not, delete the lockfile:\n"
+        f"  rm {LOCK_FILE}",
+        flush=True,
+    )
+    sys.exit(1)
+LOCK_FILE.write_text(str(os.getpid()))
+atexit.register(lambda: LOCK_FILE.unlink(missing_ok=True))
 
 # ── RunLog helper (best-effort — never crashes classify_all) ──────────────────
 def _get_run_log():

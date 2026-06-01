@@ -8,6 +8,7 @@ venv/
 # Runtime artifacts
 cache/
 logs/
+*.lock
 backtests/
 *.db
 *.db-shm
