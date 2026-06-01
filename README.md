@@ -1,4 +1,4 @@
-# Kalshi Tracker
+# Kalshi/Polymarket Tracker
 
 Multi-agent pipeline for finding high-certainty opportunities on [Kalshi](https://kalshi.com) and [Polymarket](https://polymarket.com) prediction markets.
 
