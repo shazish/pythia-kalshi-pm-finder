@@ -195,7 +195,7 @@ python3 kalshi-pm-analyzer finalize ← produces Excel report
 
 ### CRITICAL: classified_anomaly.json vs classified.json
 
-The finalize step (`kalshi_cron.finalize()`) reads from `cache/classified.json`, NOT `cache/classified_anomaly.json`. If you only save anomaly classifications to `classified_anomaly.json`, the finalize step will say "No classified.json found."
+The finalize step (`kalshi-pm-analyzer finalize`) reads from `cache/classified.json`, NOT `cache/classified_anomaly.json`. If you only save anomaly classifications to `classified_anomaly.json`, the finalize step will say "No classified.json found."
 
 ```bash
 cd ~/kalshi-tracker

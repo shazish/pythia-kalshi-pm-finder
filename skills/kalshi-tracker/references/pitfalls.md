@@ -3,7 +3,7 @@
 **Old approach (replaced):** Anomaly candidates were classified via `scripts/classify_anomaly.py` (batch script with programmatic rules), then copied from `classified_anomaly.json` to `classified.json` before finalize.
 
 **Current approach:** All modes (including anomaly) use the two-phase pipeline:
-1. Run `python3 kalshi_cron.py anomaly` → saves `cache/anomaly_candidates.json`
+1. Run `python3 kalshi-pm-analyzer anomaly` → saves `cache/anomaly_candidates.json`
 
 2. Phase 1: 3× Owl Alpha subagents research the anomaly candidates via `delegate_task`
 3. Phase 2: Main agent reads research and classifies with `validate_classification()`
@@ -54,7 +54,7 @@ In practice, this bug caused all 5 CERTAIN NO classifications in a test run to b
 
 ## 42. pipeline_logger.py Required by finalize (May 2026)
 
-`kalshi_cron.py finalize()` imports `from pipeline_logger import get_logger`. This file is NOT generated automatically and must exist in the project root. If accidentally deleted, finalize crashes with `ModuleNotFoundError`.
+`kalshi-pm-analyzer finalize` imports `from pipeline_logger import get_logger`. This file is NOT generated automatically and must exist in the project root. If accidentally deleted, finalize crashes with `ModuleNotFoundError`.
 
 **Minimal replacement** (if deleted):
 ```python
@@ -69,16 +69,16 @@ def get_logger(name="kalshi"):
     return logger
 ```
 
-**Prevention:** Before cleaning up "noise" files in the project root, check imports in `kalshi_cron.py`: `grep "^import\|^from" kalshi_cron.py`.
+**Prevention:** Before cleaning up "noise" files in the project root, check imports in `kalshi-pm-analyzer`: `grep "^import\|^from" kalshi-pm-analyzer`.
 
 ## 40. Script Is the Source of Truth, Not Cron Prompts (May 2026)
 
-**Design principle:** `kalshi_cron.py` now owns all classification instructions. Cron prompts are minimal (`cd ~/kalshi-tracker && python3 kalshi_cron.py [mode]`). The script prints two-phase instructions after scanning.
+**Design principle:** `kalshi-pm-analyzer` now owns all classification instructions. Cron prompts are minimal (`cd ~/kalshi-tracker && python3 kalshi-pm-analyzer [mode]`). The script prints two-phase instructions after scanning.
 
-**Why:** Previously, the two-phase workflow was described in 8 separate cron prompts. Any change required 8 edits. Now one edit to `kalshi_cron.py` updates all modes.
+**Why:** Previously, the two-phase workflow was described in 8 separate cron prompts. Any change required 8 edits. Now one edit to `kalshi-pm-analyzer` updates all modes.
 
 **When to edit:** If the two-phase approach changes, update:
-1. `kalshi_cron.py` (the `_print_two_phase_instructions` function)
+1. `kalshi-pm-analyzer` (the `_print_instructions` function)
 2. The `two-phase-kalshi-classifier` skill (detailed classification patterns)
 3. `references/two-phase-pipeline.md` (mode-to-file mapping, cron layout)
 Do NOT edit individual cron prompts.

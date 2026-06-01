@@ -102,7 +102,7 @@ kalshi-tracker/
 ├── backtest_agent.py       # Historical evaluation
 ├── market_clusterer.py     # Multi-market clustering
 ├── config.yaml             # Configuration
-├── kalshi_cron.py          # Cron job entry point
+├── kalshi-pm-analyzer      # Pipeline entry point (scan + two-phase instructions)
 ├── docs/                   # HTML architecture diagrams
 ├── scripts/                # Batch classification scripts
 ├── kalshi-video/           # Explainer video (HTML deck)

@@ -188,7 +188,7 @@ Follow the printed TWO-PHASE CLASSIFICATION INSTRUCTIONS.
 | polymarket-full-scan | 0 0 * * * | |
 | polymarket-anomaly-scan | 0 */6 * * * | |
 
-Skills are NOT attached to cron jobs — `kalshi_cron.py` self-describes the two-phase flow.
+Skills are NOT attached to cron jobs — `kalshi-pm-analyzer` self-describes the two-phase flow.
 
 ## Classification Results (May 2026 deep scan, 150 candidates)
 

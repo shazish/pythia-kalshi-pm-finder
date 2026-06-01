@@ -4,7 +4,7 @@ Replaces the old single-agent inline-classification approach. All scan modes now
 
 ## Architecture
 
-`kalshi_cron.py [mode]` prints two-phase instructions after running the scanner. The script is the **single source of truth** — cron job prompts just say "run it and follow the output."
+`kalshi-pm-analyzer [mode]` prints two-phase instructions after running the scanner. The script is the **single source of truth** — cron job prompts just say "run it and follow the output."
 
 ## Mode → Candidates File Mapping
 
@@ -21,7 +21,7 @@ Replaces the old single-agent inline-classification approach. All scan modes now
 
 ## Cron Job Layout (all paused — script is self-documenting)
 
-8 jobs total, all with simplified prompt: `cd ~/kalshi-tracker && python3 kalshi_cron.py [mode]` + `[terminal, web, delegation]` toolsets. Cron prompts no longer load skills — kalshi_cron.py prints the two-phase instructions natively.
+8 jobs total, all with simplified prompt: `cd ~/kalshi-tracker && python3 kalshi-pm-analyzer [mode]` + `[terminal, web, delegation]` toolsets. Cron prompts no longer load skills — kalshi-pm-analyzer prints the two-phase instructions natively.
 
 | Job | Schedule | Status |
 |-----|----------|--------|
