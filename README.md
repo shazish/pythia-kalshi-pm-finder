@@ -1,30 +1,44 @@
-# Kalshi/Polymarket Tracker
+# Pythia
 
-Multi-agent pipeline for finding high-certainty opportunities on [Kalshi](https://kalshi.com) and [Polymarket](https://polymarket.com) prediction markets.
+> *Some markets are already decided. Find them.*
 
-Scans thousands of markets, filters by price/liquidity, classifies near-certain outcomes via LLM + web research, computes edge after fees, and exports actionable opportunities to Excel.
+<img width="612" height="492" alt="pythia" src="https://github.com/user-attachments/assets/af166e22-c09e-4c18-8b1d-67a84dee540c" />
 
-## Architecture
+Multi-agent pipeline that hunts mispriced certainties on [Kalshi](https://kalshi.com) and [Polymarket](https://polymarket.com). Scans thousands of markets, researches each candidate with live web search, classifies outcomes as CERTAIN / LIKELY / UNCLEAR via LLM reasoning, verifies source integrity, and surfaces actionable opportunities.
+
+The insight: prediction markets price *opinion*. Pythia finds markets where the outcome is already structurally determined — impossible timelines, mathematical near-impossibilities, events already resolved — and the market hasn't caught up.
+
+## How It Works
 
 ```
-Scanner → Classifier → Opportunity Manager → Excel Report
- │          │               │                   │
- │ No LLM   │ LLM + Web     │ No LLM (Kelly)    │ No LLM
- │          │ 3 searches    │ edge calc+fees    │
- └──────────┴───────────────┴───────────────────┘
+Scanner → Research → Classifier → Verifier → Opportunity Manager → Excel Report
+ │          │            │            │              │                   │
+ │ No LLM   │ Web search │ LLM reason │ Downgrade    │ No LLM (Kelly)    │ No LLM
+ │          │ per ticker │ CERTAIN /  │ bad CERTAINs │ edge + fees       │
+ │          │            │ LIKELY /   │              │                   │
+ │          │            │ UNCLEAR    │              │                   │
+ └──────────┴────────────┴────────────┴──────────────┴───────────────────┘
 ```
 
 ### Scanner
-Fetches markets via Kalshi's events API, applies price/spread/volume/date filters, excludes multi-leg combo markets, ranks by urgency score (time-weighted), and caches prices for incremental change detection.
+Fetches markets via Kalshi and Polymarket APIs. Applies price/spread/volume/date filters, excludes multi-leg combo markets, ranks by urgency score (time-weighted). Separate anomaly scanner flags markets below 80¢ where large capital deployment signals potential smart-money divergence.
+
+### Research Phase
+Parallel web research agents (Owl Alpha) gather live evidence per candidate — current status, recent news, settlement criteria. No classification yet, just facts and URLs. Saves structured findings per ticker.
 
 ### Classifier
-Builds structured prompts with market details + settlement rules + urgency. Performs 3+ web searches per candidate (current status, recent news, settlement criteria). Outputs structured JSON: `CERTAIN / LIKELY / UNCLEAR` with confidence score, confirming signals, and validation.
+Reads research findings. Runs LLM reasoning (DeepSeek or equivalent) to produce structured JSON: classification, confidence score (0–100), confirming signals with source URLs, contradicting signals, and what-would-change-this. Validates output schema before accepting.
+
+Guards against common failure modes:
+- **Future-event detection**: electoral/political composition markets automatically flagged; classifier redirected to search forecasts and polling, not current state
+- **URL hallucination prevention**: source URLs must be real `https://` links copied from research, not fabricated descriptions
+- **Parallel run protection**: lockfile prevents two classification processes from overwriting each other
+
+### Verifier
+Re-examines every CERTAIN entry. Downgrades to LIKELY if source URLs are hallucinated (non-`https://`), contradict the market's settlement rules, or if a future-event market shows no forward-looking research. Acts as a final sanity check before edge calculation.
 
 ### Opportunity Manager
-Computes expected edge after platform-specific fees (Kalshi: profit-based, Polymarket: volume-based). Applies Kelly criterion with a 5% bankroll cap. Filters by dual threshold (raw edge ≥ 3% OR annualized edge ≥ 15%). Routes to notification or dashboard log.
-
-### Anomaly Scanner
-Separate scan for markets below 80¢ where large capital deployment signals potential mispricing. Flags divergences between media reporting and smart money for investigation.
+Computes expected edge after platform-specific fees (Kalshi: profit-based, Polymarket: volume-based). Applies Kelly criterion with 5% bankroll cap. Filters by dual threshold (raw edge ≥ 3% OR annualized edge ≥ 15%). Routes to notification or dashboard log.
 
 ## Quick Start
 
@@ -44,12 +58,13 @@ python3 cli.py finalize
 
 ### Classification Step
 
-The classifier requires an LLM with web search capability (used via the Hermes Agent framework in production). For standalone use:
+The classifier requires an LLM with web search (used via Hermes agent framework in production). For standalone use:
 
-1. Run the scanner to produce `cache/candidates.json`
-2. Classify each candidate manually or via an external LLM
-3. Save results as `cache/classified.json` (see `classifier.py` for schema)
-4. Run `python3 cli.py finalize` for the Excel report
+1. Run scanner → `cache/candidates.json`
+2. Run research phase → `cache/research_batch{N}.json`
+3. Run classifier → `cache/classified.json`
+4. Run verifier: `python3 scripts/verify_classifications.py`
+5. Run `python3 cli.py finalize` for Excel report
 
 ## Configuration
 
@@ -103,8 +118,9 @@ kalshi-tracker/
 ├── market_clusterer.py     # Multi-market clustering
 ├── config.yaml             # Configuration
 ├── kalshi-pm-analyzer      # Pipeline entry point (scan + two-phase instructions)
+├── scripts/                # Batch classification + verify scripts
+├── tmp/                    # Temp scripts (not committed)
 ├── docs/                   # HTML architecture diagrams
-├── scripts/                # Batch classification scripts
 ├── kalshi-video/           # Explainer video (HTML deck)
 ├── pyproject.toml          # Package metadata
 ├── requirements.txt        # Dependencies

@@ -11,6 +11,74 @@ Opportunity Manager can handle them identically downstream.
 import os
 import re
 
+# ── Future-event settlement detection ────────────────────────────────────────
+# Keywords indicating the settlement outcome depends on a scheduled future event
+# (election, appointment, vote, etc.) rather than the current state of the world.
+_FUTURE_EVENT_KEYWORDS = [
+    # Electoral
+    "election", "midterm", "primary", "ballot", "runoff",
+    "senate seats", "house seats", "congress", "congressional",
+    "120th", "121st", "122nd", "electoral",
+    # Political composition
+    "hold.*seat", "seats.*hold", "seats in", "party.*control",
+    "senate.*seat", "house.*seat",
+    # Appointments / confirmations
+    "confirm", "appointment", "appointed", "sworn in",
+    # Legislative outcomes
+    "legislation pass", "bill pass", "vote on", "referendum",
+]
+
+_FORWARD_LOOKING_TERMS = {
+    "forecast", "forecasts", "projection", "projections", "projected",
+    "prediction", "predictions", "predicted", "polling", "poll",
+    "odds", "outlook", "expected", "expect", "likely to win",
+    "2026 election", "2027", "after the election", "midterm",
+    "race to", "competitive", "tossup", "lean",
+}
+
+def _detect_future_event(candidate: dict) -> str:
+    """
+    Returns a warning string if this market's settlement depends on a future
+    event (election, vote, appointment) whose outcome is NOT yet determined.
+    Returns empty string if no future-event signal detected.
+    """
+    title = candidate.get("title", "").lower()
+    rules = candidate.get("rules_primary", "").lower()
+    subtitle = candidate.get("subtitle", "").lower()
+    combined = f"{title} {rules} {subtitle}"
+    days = candidate.get("days_to_close", 0) or 0
+
+    if days < 14:
+        return ""  # Already near resolution — current state is the settlement state
+
+    matched = [kw for kw in _FUTURE_EVENT_KEYWORDS if re.search(kw, combined)]
+    if not matched:
+        return ""
+
+    close_date = candidate.get("close_date", "the settlement date")
+    return (
+        f"\n⚠ FUTURE SETTLEMENT STATE WARNING ⚠\n"
+        f"This market closes in {days} days ({close_date}).\n"
+        f"The settlement will reflect conditions AFTER a future scheduled event\n"
+        f"(election, vote, appointment, or similar) — NOT the current state of affairs.\n"
+        f"\n"
+        f"The current composition/status (e.g. current Senate seats, current office-holders)\n"
+        f"may be completely different from the settlement state.\n"
+        f"\n"
+        f"MANDATORY RESEARCH REDIRECT:\n"
+        f"  ✗ Do NOT use current composition as the basis for your classification.\n"
+        f"  ✓ Search A MUST research the PROJECTED state after the upcoming event:\n"
+        f"       e.g. '2026 Senate election forecast', 'projected seats after election',\n"
+        f"            'polling 2026', 'Cook Political Report 2026 Senate ratings'\n"
+        f"  ✓ Your confirming/contradicting signals must reference forecasts and projections,\n"
+        f"       not the current real-world composition.\n"
+        f"  ✓ If the current state already satisfies the resolution criterion (e.g. the\n"
+        f"       current count is below a threshold), that is IRRELEVANT unless the count\n"
+        f"       cannot change before settlement.\n"
+        f"⚠ END WARNING ⚠\n"
+    )
+
+
 # ── Metric patterns ───────────────────────────────────────────────────────────
 # (rule_pattern, canonical_form, accepted_aliases)
 # Validator passes if any form (canonical OR alias) appears in LLM output.
@@ -293,6 +361,7 @@ def build_regular_prompt(candidate, recency_days: int = 14):
 
     settlement_metric = extract_settlement_metric(rules)
     metric_section = f"\nSETTLEMENT METRIC: {settlement_metric}" if settlement_metric else ""
+    future_event_warning = _detect_future_event(candidate)
 
     platform = candidate.get("platform", "Kalshi")
     return f"""Classify this {platform} market:
@@ -313,7 +382,7 @@ DAYS TO CLOSE: {candidate.get('days_to_close', 'N/A')}
 URGENCY SCORE: {candidate.get('urgency_score', 'N/A')}/100
 {metric_section}
 
-{rules_section}{anomaly_section}
+{rules_section}{anomaly_section}{future_event_warning}
 
 IMPORTANT: Use the DAYS TO CLOSE value to calibrate your certainty threshold.
 - <= 7 days: Easier to classify as CERTAIN (little time for surprises)
@@ -324,7 +393,7 @@ IMPORTANT: Use the DAYS TO CLOSE value to calibrate your certainty threshold.
 
 Instructions:
 1. Perform at least 3 web searches before classifying.
-2. Search A: current real-world status of this event.
+2. Search A: {"projected/forecast state after the upcoming event (see FUTURE SETTLEMENT WARNING above)" if future_event_warning else "current real-world status of this event"}.
 3. Search B (MANDATORY recency): "[topic] news [current month year]" -- search for developments in the past {recency_days} days.
 4. Search C: settlement criteria / how {platform} will resolve this market.
 5. Read SETTLEMENT RULES carefully -- {platform}'s criteria can differ from the real-world outcome.
@@ -353,6 +422,7 @@ def build_anomaly_prompt(candidate, recency_days: int = 14):
                      (f"\nSETTLEMENT RULES (DETAIL): {rules_secondary}" if rules_secondary else "")) if rules else ""
     settlement_metric = extract_settlement_metric(rules)
     metric_section = f"\nSETTLEMENT METRIC: {settlement_metric}" if settlement_metric else ""
+    future_event_warning = _detect_future_event(candidate)
 
     platform = candidate.get("platform", "Kalshi")
     return f"""Investigate this {platform} VOLUME ANOMALY:
@@ -376,7 +446,7 @@ ANOMALY SIGNAL:
   Ratio (HC / opposite):                 {ratio}x
   This means roughly {ratio}x more capital is on the {side} side than the opposite.
 
-{rules_section}
+{rules_section}{future_event_warning}
 
 Your investigation questions:
 1. Why is ${implied_hc:,} sitting on {side} at only {prob}c? What do those bettors know?
@@ -387,7 +457,7 @@ Your investigation questions:
 6. Consider the {candidate.get('days_to_close', 'N/A')}-day time horizon -- is the smart money accounting for near-term catalysts the market is missing?
 
 Instructions:
-1. Search A: current real-world status of this event -- ground truth.
+1. Search A: {"projected/forecast state after the upcoming event (see FUTURE SETTLEMENT WARNING above)" if future_event_warning else "current real-world status of this event -- ground truth"}.
 2. Search B (MANDATORY recency): "[topic] news [current month year]" -- search for developments in the past {recency_days} days.
 3. Search C: any catalyst, announcement, or structural reason justifying the {side} accumulation.
 4. Classify: is the market mispriced (CERTAIN), probably fair (LIKELY), or unclear (UNCLEAR)?
@@ -400,15 +470,31 @@ build_classifier_prompt = build_regular_prompt
 
 # ── Validation ────────────────────────────────────────────────────────────────
 
-def validate_classification(output, rules: str = ""):
+def validate_classification(output, rules: str = "", candidate: dict = None):
     """Validate the classifier output against structural rules. Shared by both prompt types.
 
     Args:
-        output: the classification dict from the LLM
-        rules: optional settlement rules text — if provided, enables metric-consistency
-               checks that can auto-downgrade CERTAIN to LIKELY.
+        output:    the classification dict from the LLM
+        rules:     optional settlement rules text — enables metric-consistency checks
+        candidate: optional original candidate dict — enables future-event checks
     """
     errors = []
+
+    # Future-event check: if this market depends on a future event (election, vote, etc.)
+    # and classification is CERTAIN or high-confidence LIKELY, verify that the research
+    # was forward-looking (searched for forecasts/projections) not just current-state.
+    if candidate and _detect_future_event(candidate):
+        searched = " ".join(output.get("searched_for", [])).lower()
+        reasons_text = " ".join(output.get("reasons", [])).lower()
+        all_text = searched + " " + reasons_text
+        has_forward_looking = any(term in all_text for term in _FORWARD_LOOKING_TERMS)
+        if not has_forward_looking and output.get("classification") in ("CERTAIN", "LIKELY"):
+            errors.append(
+                "Future-event market: searched_for and reasons show no forward-looking research "
+                "(forecasts, projections, polling, election outlook). "
+                "Current-state data does not determine this market's outcome — downgrade to LIKELY."
+            )
+            output["classification"] = "LIKELY"
 
     if output.get("classification") == "CERTAIN":
         if len(output.get("reasons", [])) < 3:
@@ -563,7 +649,7 @@ class Classifier:
             if pre_searched and len(result.get("searched_for", [])) < 3:
                 result["searched_for"] = (result.get("searched_for", []) + pre_searched)[:max(3, len(pre_searched))]
 
-            validated = validate_classification(result, rules)
+            validated = validate_classification(result, rules=rules, candidate=candidate)
 
             # Only retry if CERTAIN failed validation — LIKELY/UNCLEAR are fine as-is.
             if (

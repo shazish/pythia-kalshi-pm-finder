@@ -340,8 +340,12 @@ def finalize():
 
     for cm in classified:
         if "classification" in cm and isinstance(cm["classification"], dict):
-            candidate_rules = cm.get("candidate", {}).get("rules_primary", "")
-            cm["classification"] = validate_classification(cm["classification"], rules=candidate_rules)
+            candidate_obj = cm.get("candidate", {})
+            cm["classification"] = validate_classification(
+                cm["classification"],
+                rules=candidate_obj.get("rules_primary", ""),
+                candidate=candidate_obj,
+            )
 
     from opportunity_manager import OpportunityManager
     from excel_reporter import export_excel
