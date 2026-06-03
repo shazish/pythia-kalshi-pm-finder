@@ -61,43 +61,43 @@ Each subagent saves `{ticker, title, price, side, hc_dollars, research: {searche
 2. Use `execute_code` with `web_search` directly for the remaining candidates — this reliably completes 17–18 candidates in ~83 seconds
 3. Do NOT retry delegate_task more than once per batch
 
-## Phase 2: Reasoning (main agent — NOT a subagent)
+## Phase 2: Classification (`scripts/classify_all.py`)
 
-Read research files, classify each candidate based SOLELY on the research evidence. Do NOT use pattern-matching scripts. Run via `execute_code()` — do NOT delegate to subagents (nous DeepSeek also times out at 600s, and delegation depth is limited to 1 for this user).
+Run the classification script — do NOT reason in-context or write hardcoded scripts:
 
-```python
-# In execute_code:
-import json
-from classifier import validate_classification
-
-all_research = []
-for i in range(3):
-    data = json.load(open(f"cache/research_batch{i}.json"))
-    for entry in data:
-        if entry["ticker"] not in {e["ticker"] for e in all_research}:
-            all_research.append(entry)
-
-for entry in all_research:
-    # Read entry["research"]["summary"] and entry["research"]["findings"]
-    # Reason about evidence, produce classification dict
-    # Call validate_classification() on every output
-    # Save to cache/results_batch{N}.json
+```bash
+python3 scripts/classify_all.py --run-dir {run_dir}
 ```
 
-**Key rule:** Each candidate needs individual reasoning based on its specific evidence — not generic keyword matching. Use if/elif chains or a reasoning dict keyed by ticker patterns, but always anchor decisions in the actual research summary and findings.
+Script behavior:
+- Loads `cache/candidates.json` + `cache/anomaly_candidates.json` (if present)
+- Builds research index from all `cache/research_batch*.json` files
+- Calls `Classifier.classify()` once per ticker via LLM API
+- Injects Phase 1 research findings directly into the classifier prompt
+- Checkpoints to `cache/classified.json` after each ticker — safe to kill and restart
+- Mirrors to `logs/{run_dir}/classified.json` if run_dir is set
+- Lockfile at `cache/classify_all.lock` aborts if another instance is running
 
-## Phase 3: Verify —已知 Bug in verify_classifications.py
+**What is prohibited:**
+- Writing a Python file with hardcoded classification tuples per ticker
+- Reasoning about all tickers in a single in-context pass and writing constants
+- Skipping `classify_all.py` and orchestrating `Classifier.classify()` calls in-context
+- Pattern-matching or heuristic substitution for the per-ticker LLM call
+
+## Phase 3: Verify
 
 Run `python3 scripts/verify_classifications.py` to fact-check CERTAIN entries.
 
-**⚠ KNOWN BUG (May 2026):** The script's price reality check incorrectly downgrades CERTAIN NO classifications when the market agrees (low YES implied probability). See `references/pitfalls.md` entry #41.
+Downgrades CERTAIN → LIKELY if:
+- Any `confirming_signals[].source_url` doesn't start with `https://` (hallucinated URL)
+- Market price strongly disagrees with classified side
+- Hallucination patterns detected in signal facts
 
-**After running verify:** Always review CERTAIN→LIKELY downgrades manually:
-- If side=NO and YES implied probability < 20c, the downgrade is a false positive — restore CERTAIN
-- If side=YES and YES implied probability > 80c, same false positive pattern
-- Real downgrades to investigate: market prices the classified side below 50c (genuine disagreement)
+**⚠ KNOWN BUG (still present June 2026):** Price reality check is inverted for NO-side entries. Condition `side == 'NO' and price < 50` fires when market AGREES (low YES price = market says NO likely). Should be `price > 50`. See `references/pitfalls.md` entry #41.
 
-Do NOT trust verify script downgrades blindly for low-price NO-side markets.
+**After running verify:** Review CERTAIN→LIKELY downgrades manually:
+- If side=NO and `implied_probability` < 50 → likely false positive, restore CERTAIN
+- Real downgrades: side=NO and market prices YES > 50c (genuine disagreement)
 
 ## Key Pitfall: Model Override Must Be Per-Task
 

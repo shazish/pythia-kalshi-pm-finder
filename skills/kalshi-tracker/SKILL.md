@@ -38,21 +38,21 @@ high-certainty betting opportunities.
          │ candidates file      │ research_batch{N}.json
          ▼                      ▼
 ┌────────────────┐ ┌────────────────────────────────┐
-│  candidates    │ │  Phase 2 (main agent classify) │
-│  .json file    │ │  execute_code — NOT a subagent │
-└────────────────┘ │  evidence-based reasoning only │
+│  candidates    │ │  Phase 2: classify_all.py      │
+│  .json file    │ │  Classifier.classify() / ticker│
+└────────────────┘ │  LLM API, checkpoint/resume    │
                    │  validate_classification()      │
-                   │  saves results_batch{N}.json    │
+                   │  saves classified.json directly │
                    └──────────┬─────────────────────┘
                               │
                               ▼
-┌──────────────────────────────────────────────────┐
-│  MERGE: results_batch{}.json → classified.json   │
-│  CRITICAL: merge by ticker lookup against        │
-│  original candidates file — research batch       │
-│  format strips close_date & implied_probability  │
-└──────────────────────┬───────────────────────────┘
-                       ▼
+                   ┌──────────────────────────────┐
+                   │  Step 3: verify_classifications│
+                   │  Downgrades bad CERTAINs       │
+                   │  (hallucinated URLs, future-   │
+                   │   event markets, price gap)    │
+                   └──────────┬───────────────────┘
+                              ▼
 ┌──────────────────────────────────────────────┐
 │  Opportunity Manager (no LLM)                 │
 │  edge calc → Kelly → notify → Excel + CSV    │
@@ -103,47 +103,27 @@ python3 kalshi-pm-analyzer [mode]
 #    Each saves to cache/research_batch{N}.json
 #    If Owl Alpha times out, fall back to execute_code with web_search
 
-# 3. Phase 2 — main agent evidence-based reasoning (NOT a subagent)
-#    In execute_code: read all research_batch files, classify each candidate
-#    based on its research evidence using if/elif reasoning chains
-#    Import validate_classification() from classifier.py and call it on every output
-#    Save to cache/results_batch{N}.json
+# 3. Phase 2 — run classify_all.py (NOT in-context reasoning or hardcoded scripts)
+#    python3 scripts/classify_all.py --run-dir {run_dir}
+#    Script calls Classifier.classify() once per ticker via LLM API
+#    Checkpoints after each ticker — safe to kill and restart
+#    Saves directly to cache/classified.json (no separate merge step needed)
+#    Lockfile at cache/classify_all.lock prevents parallel runs
 
-# 4. Merge (CRITICAL — use original candidates, not research format)
-#    Look up each classified entry's ticker in the original candidates file
-#    to get close_date, implied_probability, etc.
-#    Save to cache/classified.json
-
-# 5. Phase 3 — Fact-check CERTAIN entries against settlement sources
+# 4. Step 3 — Verify CERTAIN entries against settlement sources
 #    Run: python3 scripts/verify_classifications.py
-#    ⚠ KNOWN BUG: verify script's price reality check incorrectly downgrades CERTAIN NO
-#      when market agrees (low YES implied prob). See references/pitfalls.md #41.
+#    ⚠ KNOWN BUG: price reality check incorrectly flags CERTAIN NO when market agrees
+#      (price < 50 = low YES = market AGREES with NO, but script flags it as disagreement)
+#      See references/pitfalls.md #41.
 #    After running: manually review all CERTAIN→LIKELY downgrades.
-#      If side=NO and YES price < 20c → restore CERTAIN (false positive downgrade).
-#    Verify claims against contract PDFs, authorized sources (OMB/OPM, NYT, Reuters, AP)
-#    Wikipedia is NOT a settlement source
+#      If side=NO and YES implied_probability < 50 → likely a false positive, restore CERTAIN.
 
-# 6. Finalize → Excel + CSV
+# 5. Finalize → Excel + CSV
 python3 kalshi-pm-analyzer finalize
 
 ⚠ If finalize crashes with ModuleNotFoundError for pipeline_logger, the file was likely
    deleted during cleanup. See references/pitfalls.md #42 for the minimal replacement.
 ```
-
-### CRITICAL: Merge Format Issue
-
-The research batch format (from Phase 1) only has `{ticker, title, price, side, hc_dollars, research}`. It strips `close_date`, `implied_probability`, `days_to_close`, `category`, and other fields the opportunity manager needs.
-
-**When merging results_batch{N}.json → classified.json, always use the original candidates file by ticker lookup:**
-
-```python
-orig_by_ticker = {c['ticker']: c for c in original_candidates}
-for entry in results:
-    ticker = entry['candidate']['ticker']
-    entry['candidate'] = orig_by_ticker[ticker]  # full original data
-```
-
-Without this fix, the opportunity manager computes 0% edge (no `implied_probability`) and skips all candidates.
 
 ## Two-Phase Classification Rules
 
@@ -154,11 +134,12 @@ Without this fix, the opportunity manager computes 0% edge (no `implied_probabil
 - Save format: `{ticker, title, price, side, hc_dollars, research: {searches_performed, findings, summary}}`
 - DO NOT classify — research only
 
-**Phase 2 (Reasoning — main agent, NOT subagent):**
-- Read each research_batch in `execute_code`, classify based SOLELY on research evidence
-- Do NOT delegate to subagents — nous DeepSeek times out at 600s with only 3–4 API calls
-- Use if/elif chains or a ticker-keyed reasoning dict; anchor every decision in the actual research
-- Must import `validate_classification()` from `classifier.py` and call it on every output
+**Phase 2 (Classification — `scripts/classify_all.py`):**
+- Run: `python3 scripts/classify_all.py --run-dir {run_dir}`
+- Calls `Classifier.classify()` once per ticker via LLM API, injects Phase 1 research into prompt
+- Checkpoints after each ticker — safe to kill and restart (skips already-classified tickers)
+- Lockfile at `cache/classify_all.lock` prevents parallel runs from overwriting each other
+- Do NOT write hardcoded classification scripts or reason in-context across all tickers — both are prohibited
 
 **Validation rules (CERTAIN requires ALL of):**
 - `len(reasons) >= 3`

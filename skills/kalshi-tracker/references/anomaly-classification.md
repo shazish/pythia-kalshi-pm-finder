@@ -177,82 +177,29 @@ Reasons: ["Anomaly detected ($X at Y×)", "No corroborating news found", "Furthe
 
 These are placeholders — they keep the candidate in the pipeline for monitoring but don't constitute actionable classifications.
 
-## Pipeline Integration
+## Pipeline
 
-### File Flow
+Anomaly mode uses the same two-phase pipeline as all other modes. See `references/two-phase-pipeline.md`.
 
 ```
-cache/anomaly_candidates.json   ← anomaly scan output (56 candidates)
-         ↓
-scripts/classify_anomaly.py     ← batch classification (programmatic rules)
-         ↓
-cache/classified_anomaly.json   ← classification output (56 results)
-         ↓
-cp → cache/classified.json      ← must copy BEFORE finalize
-         ↓
-python3 kalshi-pm-analyzer finalize ← produces Excel report
-```
-
-### CRITICAL: classified_anomaly.json vs classified.json
-
-The finalize step (`kalshi-pm-analyzer finalize`) reads from `cache/classified.json`, NOT `cache/classified_anomaly.json`. If you only save anomaly classifications to `classified_anomaly.json`, the finalize step will say "No classified.json found."
-
-```bash
-cd ~/kalshi-tracker
-cp cache/classified_anomaly.json cache/classified.json
-python3 kalshi-pm-analyzer finalize
-```
-
-If there's an existing `classified.json` with regular scan classifications, merge them:
-```python
-import json, shutil
-# Save anomaly before merging
-shutil.copy('cache/classified_anomaly.json', 'cache/classified.json')
-# Finalize will re-validate all entries
+python3 kalshi-pm-analyzer anomaly          # scan → cache/anomaly_candidates.json
+# Phase 1: Owl Alpha research subagents → cache/research_batch{N}.json
+python3 scripts/classify_all.py             # Phase 2 → cache/classified.json
+python3 scripts/verify_classifications.py   # Step 3
+python3 kalshi-pm-analyzer finalize         # Excel report
 ```
 
 ### Expected Outcomes
 
 From a typical anomaly scan (56 candidates):
-- **CERTAIN**: 0 (both structural certainties get auto-downgraded for confidence <95)
-- **LIKELY**: 40-45 (majority — known market types with directional conviction)
-- **UNCLEAR**: 10-15 (coin flips, unknown anomalies)
-- **Opportunities to notify**: 0 (no CERTAIN with ≥95 confidence)
-- **Dashboard entries**: 56 (all candidates logged for monitoring)
+- **CERTAIN**: 0–2 (structural impossibilities only; confidence must reach ≥95)
+- **LIKELY**: 40–45
+- **UNCLEAR**: 10–15 (coin flips, unknown anomalies)
+- **Opportunities to notify**: 0–1 (rare — anomaly markets are mid-range, not near-certain)
+- **Dashboard entries**: all candidates logged for monitoring
 
 ### When to Re-Run
 
 - After major news events (Patel fired, CPI print, election results)
-- Weekly as part of the regular monitoring cycle (every Saturday or Sunday)
-- Before the user checks in with 'anything interesting on Kalshi?'
-
----
-
-### Parallel Subagent Classification (Research-Backed Alternative)
-
-For higher-quality classifications, delegate to parallel Hermes subagents via delegate_task instead of using programmatic rules. Each subagent does real web research per candidate.
-
-**Pattern:**
-```
-delegate_task(tasks=[
-    {"goal": "Classify candidates [0:5] from cache/anomaly_candidates.json. "
-             "Do web research for each, produce structured classifications. "
-             "Save to cache/batch0_results.json.",
-     "toolsets": ["web", "terminal", "file"]},
-    {"goal": "Classify candidates [5:10]...",
-     "toolsets": ["web", "terminal", "file"]},
-])
-```
-
-**Free-tier constraint (nous/deepseek):** 3 concurrent subagents cause HTTP 503s. Max is 2 concurrent. Each takes ~3-4 min for 5 candidates of deep research (25+ web searches). 503'd agents lose all work.
-
-**Mitigation:** Use per-task model parameter to spread provider load:
-```
-delegate_task(tasks=[
-    {"goal": "...", "model": {"provider": "nous", "model": "deepseek/deepseek-v4-flash"}},
-    {"goal": "...", "model": {"provider": "openrouter", "model": "deepseek/deepseek-v4-flash"}},
-])
-```
-Or configure fallback_providers in config.yaml for automatic retry on 503.
-
-**Tradeoff:** Research-backed = evidence with source URLs but 200x slower. Batch script = <1s but heuristics. Use subagents for <20 candidates where quality matters.
+- Weekly as part of the regular monitoring cycle
+- Before checking in with "anything interesting on Kalshi?"
