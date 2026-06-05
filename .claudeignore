@@ -1,0 +1,19 @@
+# Compiled Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Pipeline cache — large JSON, changes every run, not useful for code tasks
+cache/
+tmp/
+
+# Run logs — historical Excel/JSON artifacts, 35MB+
+logs/
+
+# HTML diagrams — binary-ish, not code
+docs/*.html
+kalshi-video/
+
+# Assets
+assets/
