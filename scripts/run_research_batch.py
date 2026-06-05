@@ -1,43 +1,87 @@
 #!/usr/bin/env python3
-"""Run Phase 1 research for a single batch file using direct Tavily API calls.
+"""Run Phase 1 research for a single batch file using direct search API calls.
 
 Usage: python3 run_research_batch.py <batch_name> [run_dir]
   batch_name — e.g. research_batch0 (file is cache/research_batch0.json)
   run_dir    — e.g. 20260530_1240_deep (folder under logs/); reads .current_run if omitted
+
+Reads web.backend from ~/.hermes/config.yaml to pick the provider,
+then reads the matching key from ~/.hermes/.env. Switch providers in
+config.yaml — no code change needed.
 """
-import os, json, sys, time, subprocess, datetime
+import json, sys, time, subprocess, datetime, re, urllib.parse
 from pathlib import Path
 
-env_path = Path('/home/shaah/.hermes/.env')
-tavily_key = None
-with open(env_path) as f:
-    for line in f:
-        parts = line.strip().split('=', 1)
-        if parts[0].strip() == 'TAVILY_API_KEY':
-            tavily_key = parts[1].strip().strip('"').strip("'")
-            break
+HERMES = Path('/home/shaah/.hermes')
 
-if not tavily_key:
-    print("ERROR: No TAVILY_API_KEY found")
+BACKEND_ENV_VAR = {
+    'brave':  'BRAVE_SEARCH_API_KEY',
+    'tavily': 'TAVILY_API_KEY',
+}
+
+def _read_env(key):
+    with open(HERMES / '.env') as f:
+        for line in f:
+            parts = line.strip().split('=', 1)
+            if len(parts) == 2 and parts[0].strip() == key:
+                return parts[1].strip().strip('"').strip("'")
+    return None
+
+def _read_config_backend():
+    text = (HERMES / 'config.yaml').read_text()
+    m = re.search(r'^web:\n(?:[ \t]+\S[^\n]*\n)*?[ \t]+backend:\s*(\S+)', text, re.MULTILINE)
+    return m.group(1).lower() if m else 'tavily'
+
+backend = _read_config_backend()
+env_var = BACKEND_ENV_VAR.get(backend)
+if not env_var:
+    print(f"ERROR: Unknown search backend '{backend}' (supported: {list(BACKEND_ENV_VAR)})")
     sys.exit(1)
 
-print(f"Tavily key: ...{tavily_key[-8:]}", flush=True)
+api_key = _read_env(env_var)
+if not api_key:
+    print(f"ERROR: {env_var} not found in ~/.hermes/.env")
+    sys.exit(1)
 
-def tavily_search(query, max_results=3):
+print(f"Search: {backend}, key: ...{api_key[-8:]}", flush=True)
+
+def do_search(query, max_results=5):
     if len(query) > 400:
         query = query[:397] + '...'
-    payload = json.dumps({'api_key': tavily_key, 'query': query, 'max_results': max_results})
-    result = subprocess.run(
-        ['curl', '-s', '-X', 'POST', 'https://api.tavily.com/search',
-         '-H', 'Content-Type: application/json', '-d', payload],
-        capture_output=True, text=True, timeout=15)
-    try:
-        data = json.loads(result.stdout)
-        if 'detail' in data:
-            return None, str(data['detail'])[:200]
-        return data.get('results', []), None
-    except:
-        return None, result.stdout[:200]
+    if backend == 'brave':
+        q = urllib.parse.quote(query)
+        result = subprocess.run(
+            ['curl', '-s',
+             f'https://api.search.brave.com/res/v1/web/search?q={q}&count={max_results}',
+             '-H', f'X-Subscription-Token: {api_key}',
+             '-H', 'Accept: application/json'],
+            capture_output=True, text=True, timeout=15)
+        try:
+            data = json.loads(result.stdout)
+            if 'type' not in data:
+                return None, result.stdout[:200]
+            items = [{'url': r.get('url', ''), 'title': r.get('title', '')}
+                     for r in data.get('web', {}).get('results', [])
+                     if r.get('url') and r.get('title')]
+            return items, None
+        except Exception as e:
+            return None, str(e)[:200]
+    else:  # tavily
+        payload = json.dumps({'api_key': api_key, 'query': query, 'max_results': max_results})
+        result = subprocess.run(
+            ['curl', '-s', '-X', 'POST', 'https://api.tavily.com/search',
+             '-H', 'Content-Type: application/json', '-d', payload],
+            capture_output=True, text=True, timeout=15)
+        try:
+            data = json.loads(result.stdout)
+            if 'detail' in data:
+                return None, str(data['detail'])[:200]
+            items = [{'url': r.get('url', ''), 'title': r.get('title', '')}
+                     for r in data.get('results', [])
+                     if r.get('url') and r.get('title')]
+            return items, None
+        except Exception as e:
+            return None, str(e)[:200]
 
 def extract_domain(url):
     from urllib.parse import urlparse
@@ -84,7 +128,7 @@ for i, entry in enumerate(data):
     for tmpl in ['{} news ' + current_month, '{} current status 2026', '{} outcome result']:
         q = tmpl.format(short)
         searches.append(q)
-        results, err = tavily_search(q)
+        results, err = do_search(q)
         if err:
             print(f"  [{ticker}] {err[:60]}", file=sys.stderr)
         elif results:
