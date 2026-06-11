@@ -24,20 +24,24 @@ except ImportError:
 
 # ── Colour palette ──────────────────────────────────────────────────────────
 _C = {
-    "header_bg":   "1F3864",   # dark navy
-    "header_fg":   "FFFFFF",
-    "certain":     "C6EFCE",   # green fill
-    "certain_fg":  "276221",
-    "likely":      "FFEB9C",   # yellow fill
-    "likely_fg":   "9C6500",
-    "unclear":     "FCE4D6",   # orange fill
-    "unclear_fg":  "843C0C",
-    "anomaly":     "F4CCCC",   # red-tinted
-    "near_miss":   "D9D9D9",   # grey — CERTAIN but failed validation or below threshold
-    "near_miss_fg":"595959",
-    "notify":      "D9EAD3",   # light green row tint for opportunities
-    "subheader":   "D6E4F7",   # light blue for sub-labels
-    "border":      "BFBFBF",
+    "header_bg":        "1F3864",   # dark navy
+    "header_fg":        "FFFFFF",
+    "certain":          "C6EFCE",   # green fill
+    "certain_fg":       "276221",
+    "likely":           "FFEB9C",   # yellow fill
+    "likely_fg":        "9C6500",
+    "unclear":          "FCE4D6",   # orange fill
+    "unclear_fg":       "843C0C",
+    "anomaly":          "F4CCCC",   # red-tinted (legacy volume_anomaly flag)
+    "anomaly_strong":   "FFD966",   # gold — anomaly STRONG tier
+    "anomaly_strong_fg":"7F6000",
+    "anomaly_watch":    "FFE599",   # light amber — anomaly WATCH tier
+    "anomaly_watch_fg": "9C6500",
+    "near_miss":        "D9D9D9",   # grey — CERTAIN but failed validation or below threshold
+    "near_miss_fg":     "595959",
+    "notify":           "D9EAD3",   # light green row tint for opportunities
+    "subheader":        "D6E4F7",   # light blue for sub-labels
+    "border":           "BFBFBF",
 }
 
 _THIN = None  # filled lazily after openpyxl import check
@@ -117,8 +121,9 @@ OPPORTUNITY_COLS = [
     ("Side",                    6, lambda r: r["classification"].get("high_confidence_side", "")),
     ("Bid Price (c)",          12, lambda r: int(r["candidate"].get("implied_probability", 0) or 0)),
     ("Ask Price (c)",          12, lambda r: round((r.get("exec_price") or 0) * 100)),
-    ("Confidence %",           13, lambda r: r["classification"].get("confidence_score", "")),
-    ("Classification",         14, lambda r: r["classification"].get("classification", "")),
+    ("Confidence %",           13, lambda r: r["classification"].get("signal_score", r["classification"].get("confidence_score", "")) if r.get("candidate", {}).get("candidate_type") == "anomaly" else r["classification"].get("confidence_score", "")),
+    ("Classification",         14, lambda r: r["classification"].get("tier", r["classification"].get("classification", "")) if r.get("candidate", {}).get("candidate_type") == "anomaly" else r["classification"].get("classification", "")),
+    ("Signal Score",           13, lambda r: r["classification"].get("signal_score", "") if r.get("candidate", {}).get("candidate_type") == "anomaly" else ""),
     ("Status",                 24, lambda r: r.get("_opportunity_status", r.get("routing", ""))),
     ("Validation Errors",      40, lambda r: " | ".join(r["classification"].get("_validation_errors", []))),
     ("Edge %",                 10, lambda r: _pct(r.get("edge_after_fees"))),
@@ -130,6 +135,8 @@ OPPORTUNITY_COLS = [
     ("Suggested Size ($)",     16, lambda r: r.get("position_size_usd", "")),
     ("Volume",                 12, lambda r: int(r["candidate"].get("volume", 0) or 0)),
     ("Volume Anomaly",         22, lambda r: _anomaly_str(r["candidate"].get("volume_anomaly"))),
+    ("Anomaly Evidence",       35, lambda r: _anomaly_evidence_str(r["candidate"].get("anomaly_evidence")) if r["candidate"].get("candidate_type") == "anomaly" else ""),
+    ("Veto Reason",            30, lambda r: r["classification"].get("veto_reason", "") if r.get("candidate", {}).get("candidate_type") == "anomaly" else ""),
     ("Contradicting Signals",  35, lambda r: _contra_str(r["classification"].get("contradicting_signals", []))),
     ("Settlement Risk",        35, lambda r: r["classification"].get("settlement_risk", "")),
     ("What Would Change This", 40, lambda r: r["classification"].get("what_would_change_this", "")),
@@ -166,6 +173,24 @@ def _anomaly_str(anomaly):
     )
 
 
+def _anomaly_evidence_str(evidence):
+    if not evidence:
+        return ""
+    parts = [
+        f"${evidence.get('implied_hc_dollars', 0):,} HC",
+        f"ratio {evidence.get('hc_to_opp_ratio', 0):.1f}x",
+    ]
+    if evidence.get("vol_delta_pct") is not None:
+        parts.append(f"vol Δ{evidence['vol_delta_pct']:+.0f}%")
+    if evidence.get("oi_delta") is not None:
+        parts.append(f"OI Δ{evidence['oi_delta']:+.0f}")
+    if evidence.get("price_delta") is not None:
+        parts.append(f"price Δ{evidence['price_delta']:+.0f}c")
+    if evidence.get("oi_vol_ratio") is not None:
+        parts.append(f"OI/vol {evidence['oi_vol_ratio']:.2f}")
+    return " | ".join(parts)
+
+
 def _contra_str(signals):
     if not signals:
         return ""
@@ -181,13 +206,25 @@ def _contra_str(signals):
 
 
 def _row_fill(cls):
-    fills = {"CERTAIN": _C["certain"], "LIKELY": _C["likely"], "UNCLEAR": _C["unclear"]}
+    fills = {
+        "CERTAIN": _C["certain"],
+        "LIKELY":  _C["likely"],
+        "UNCLEAR": _C["unclear"],
+        "STRONG":  _C["anomaly_strong"],
+        "WATCH":   _C["anomaly_watch"],
+    }
     color = fills.get(cls, "FFFFFF")
     return _fill(color)
 
 
 def _row_font(cls):
-    fgs = {"CERTAIN": _C["certain_fg"], "LIKELY": _C["likely_fg"], "UNCLEAR": _C["unclear_fg"]}
+    fgs = {
+        "CERTAIN": _C["certain_fg"],
+        "LIKELY":  _C["likely_fg"],
+        "UNCLEAR": _C["unclear_fg"],
+        "STRONG":  _C["anomaly_strong_fg"],
+        "WATCH":   _C["anomaly_watch_fg"],
+    }
     return _font(color=fgs.get(cls, "000000"))
 
 
@@ -219,10 +256,15 @@ def _write_sheet(ws, col_defs, rows, title):
     for row_idx, record in enumerate(rows, start=3):
         cls = record.get("classification", {}).get("classification", "")
         has_anomaly = bool(record.get("candidate", {}).get("volume_anomaly"))
+        is_anomaly_candidate = record.get("candidate", {}).get("candidate_type") == "anomaly"
         is_near_miss = record.get("_is_near_miss", False)
         if is_near_miss:
             row_fill = _fill(_C["near_miss"])
             row_font = _font(color=_C["near_miss_fg"])
+        elif is_anomaly_candidate:
+            # Anomaly candidates use tier-based gold/amber colors
+            row_fill = _row_fill(cls)
+            row_font = _row_font(cls)
         elif has_anomaly:
             row_fill = _fill(_C["anomaly"])
             row_font = _row_font(cls)
@@ -260,10 +302,12 @@ def _write_legend(wb):
     rows = [
         ("Colour", "Meaning"),
         ("Green (CERTAIN)", "Classifier assessed outcome as near-certain (≥95% confidence, ≥3 confirming signals, no contradicting signals). Actionable."),
-        ("Grey (NEAR MISS)", "Classified CERTAIN but filtered — validation errors, edge below 3%, or already notified within 7 days. Review the Validation Errors column."),
+        ("Grey (NEAR MISS)", "Classified CERTAIN or STRONG but filtered — validation errors, edge below 3%, or already notified within 7 days. Review the Validation Errors column."),
         ("Yellow (LIKELY)", "Classifier assessed outcome as probable but not certain"),
         ("Orange (UNCLEAR)", "Classifier could not determine outcome with sufficient confidence"),
-        ("Red tint", "Market has a VOLUME ANOMALY — large bets against the high-confidence side. Requires investigation."),
+        ("Red tint", "Market has a VOLUME ANOMALY flag — large bets against the high-confidence side. Requires investigation."),
+        ("Gold (STRONG)", "Anomaly candidate: quantitative score ≥70 — large unexplained smart-money accumulation, passed LLM veto check. Actionable."),
+        ("Light amber (WATCH)", "Anomaly candidate: quantitative score 45–69 — notable signal, not strong enough to action. Monitor."),
         ("", ""),
         ("Column", "Description"),
         ("Status", "OPPORTUNITY = actionable; NEAR MISS = CERTAIN but filtered (see Validation Errors)"),
@@ -296,7 +340,12 @@ def _extract_near_misses(to_log):
     near_misses = []
     for r in to_log:
         cls = r.get("classification", {})
-        if cls.get("classification") != "CERTAIN":
+        cls_value = cls.get("classification")
+        is_actionable = cls_value == "CERTAIN" or (
+            cls_value == "STRONG"
+            and r.get("candidate", {}).get("candidate_type") == "anomaly"
+        )
+        if not is_actionable:
             continue
         routing = r.get("routing", "")
         if routing in ("skipped_validation_failed", "logged_below_threshold", "skipped_already_notified"):

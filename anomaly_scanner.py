@@ -62,6 +62,7 @@ class AnomalyScanner:
             "yes_bid": market_data.get("yes_bid", 0),
             "no_bid": market_data.get("no_bid", 0),
             "volume": market_data.get("volume", 0),
+            "open_interest": market_data.get("open_interest", 0),
             "category": category,
             "last_seen": datetime.now(timezone.utc).isoformat(),
         }
@@ -98,6 +99,38 @@ class AnomalyScanner:
         if side == "YES":
             return float(market.get("yes_bid", 0) or 0)
         return float(market.get("no_bid", 0) or 0)
+
+    @staticmethod
+    def _compute_deltas(market, evidence, prior):
+        """
+        Compute cache-delta signals: vol_delta, oi_delta, price_delta.
+        Returns a dict to merge into the evidence dict.
+        """
+        if not prior:
+            return {"vol_delta": None, "vol_delta_pct": None, "oi_delta": None, "price_delta": None, "oi_vol_ratio": None}
+
+        curr_vol = float(market.get("volume") or 0)
+        prev_vol = float(prior.get("volume") or 0)
+        curr_oi      = float(market.get("open_interest") or 0)
+        prior_oi_raw = prior.get("open_interest")
+        curr_hc  = float(evidence.get("hc_price", 0))
+        side     = evidence.get("high_confidence_side", "YES")
+        prev_hc  = float(prior.get("yes_bid", 0) if side == "YES" else prior.get("no_bid", 0))
+
+        vol_delta     = round(curr_vol - prev_vol, 1)
+        vol_delta_pct = round((curr_vol - prev_vol) / max(prev_vol, 1) * 100, 1)
+        # oi_delta is None when prior has no OI data (old cache entries pre-dating OI tracking)
+        oi_delta      = round(curr_oi - float(prior_oi_raw), 1) if prior_oi_raw is not None else None
+        price_delta   = round(curr_hc - prev_hc, 1)
+        oi_vol_ratio  = round(curr_oi / max(curr_vol, 1), 3)
+
+        return {
+            "vol_delta":     vol_delta,
+            "vol_delta_pct": vol_delta_pct,
+            "oi_delta":      oi_delta,
+            "price_delta":   price_delta,
+            "oi_vol_ratio":  oi_vol_ratio,
+        }
 
     # ── Core filter ────────────────────────────────────────────────
 
@@ -267,9 +300,11 @@ class AnomalyScanner:
                     markets_checked += 1
                     m = self.client.normalize_market(raw_m)
                     ticker = m.get("ticker", "")
+                    prior = self.cache["markets"].get(ticker)
                     evidence = self._qualifies(m)
                     self._update_cache(ticker, m, category=cat)
                     if evidence:
+                        evidence.update(self._compute_deltas(m, evidence, prior))
                         candidates.append(self._enrich_candidate(m, event, evidence))
 
             cursor = data.get("cursor")

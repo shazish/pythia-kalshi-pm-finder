@@ -141,6 +141,10 @@ def main():
             cl_class = cl
 
         print(f"Classification - Verify: Processing {idx}/{total}")
+        # Anomaly candidates use quantitative scoring — no LLM citations to verify.
+        if "anomaly" in c.get("candidate_type", ""):
+            print(f"⬜ {ticker}: anomaly candidate — skipping LLM verification")
+            continue
         if cl_class == "CERTAIN":
             issues = verify_certain_classification(entry)
 

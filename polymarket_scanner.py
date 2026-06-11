@@ -58,12 +58,33 @@ class PolymarketScanner:
 
     def _update_cache(self, ticker, market):
         self.cache["markets"][ticker] = {
-            "yes_bid":   market.get("yes_bid", 0),
-            "no_bid":    market.get("no_bid", 0),
-            "volume":    market.get("volume", 0),
-            "category":  market.get("category", ""),
-            "last_seen": datetime.now(timezone.utc).isoformat(),
+            "yes_bid":       market.get("yes_bid", 0),
+            "no_bid":        market.get("no_bid", 0),
+            "volume":        market.get("volume", 0),
+            "open_interest": market.get("open_interest", 0),
+            "category":      market.get("category", ""),
+            "last_seen":     datetime.now(timezone.utc).isoformat(),
         }
+
+    @staticmethod
+    def _compute_deltas(market, evidence, prior):
+        if not prior:
+            return {"vol_delta": None, "vol_delta_pct": None, "oi_delta": None,
+                    "price_delta": None, "oi_vol_ratio": None}
+        curr_vol     = float(market.get("volume") or 0)
+        prev_vol     = float(prior.get("volume") or 0)
+        curr_oi      = float(market.get("open_interest") or 0)
+        prior_oi_raw = prior.get("open_interest")
+        curr_hc  = float(evidence.get("hc_price", 0))
+        side     = evidence.get("high_confidence_side", "YES")
+        prev_hc  = float(prior.get("yes_bid", 0) if side == "YES" else prior.get("no_bid", 0))
+        vol_delta     = round(curr_vol - prev_vol, 1)
+        vol_delta_pct = round((curr_vol - prev_vol) / max(prev_vol, 1) * 100, 1)
+        oi_delta      = round(curr_oi - float(prior_oi_raw), 1) if prior_oi_raw is not None else None
+        price_delta   = round(curr_hc - prev_hc, 1)
+        oi_vol_ratio  = round(curr_oi / max(curr_vol, 1), 3)
+        return {"vol_delta": vol_delta, "vol_delta_pct": vol_delta_pct,
+                "oi_delta": oi_delta, "price_delta": price_delta, "oi_vol_ratio": oi_vol_ratio}
 
     def _price_changed(self, ticker, market):
         threshold = self.config["price_change_threshold"]
@@ -346,6 +367,7 @@ class PolymarketScanner:
                 for raw_m in event.get("markets", []):
                     m = self.client.normalize_market(raw_m, event)
                     ticker = m["ticker"]
+                    prior = self.cache["markets"].get(ticker)
                     self._update_cache(ticker, m)
 
                     volume = float(m.get("volume") or 0)
@@ -396,6 +418,16 @@ class PolymarketScanner:
                         "total_volume":       int(volume),
                         "hc_to_opp_ratio":    round(implied_hc / max(implied_opp, 1), 2),
                     }
+                    candidate["anomaly_evidence"].update(
+                        self._compute_deltas(m, candidate["anomaly_evidence"], prior)
+                    )
+                    # PM-native time-window signals (no cache needed)
+                    candidate["anomaly_evidence"].update({
+                        "one_day_price_change": raw_m.get("oneDayPriceChange"),
+                        "volume_1wk":           raw_m.get("volume1wk"),
+                        "volume_1mo":           raw_m.get("volume1mo"),
+                        "event_volume_24hr":    event.get("volume24hr"),
+                    })
                     candidate["candidate_type"] = "pm_anomaly"
                     candidates.append(candidate)
 

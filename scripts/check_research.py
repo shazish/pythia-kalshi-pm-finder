@@ -105,7 +105,7 @@ def main():
         f"ok={r['ok']} empty={r['empty']} search_failed={r['failed']} "
         f"(+{r['n_retries']} added to retry queue)"
     )
-    if RETRY_PATH.exists():
+    if r['n_retries'] > 0 and RETRY_PATH.exists():
         queue = json.loads(RETRY_PATH.read_text())
         if queue:
             chunks = json.loads(RETRY_CHUNKS_PATH.read_text()) if RETRY_CHUNKS_PATH.exists() else []

@@ -5,8 +5,9 @@ Two entry points depending on candidate type:
   build_regular_prompt(candidate)  — price-filter survivors (ScannerAgent output)
   build_anomaly_prompt(candidate)  — volume-first candidates (AnomalyScanner output)
 
-Both share the same output schema and validate_classification() rules so the
-Opportunity Manager can handle them identically downstream.
+Regular candidates: classified by LLM → CERTAIN / LIKELY / UNCLEAR
+Anomaly candidates: scored by anomaly_scorer (quantitative) → STRONG / WATCH / SKIP.
+  LLM runs only as a veto noise-filter for WATCH/STRONG candidates, not as primary classifier.
 """
 import os
 import re
@@ -264,6 +265,57 @@ If any validation fails, the market will be downgraded to LIKELY."""
 
 # Backward-compatible constant (default 14-day window)
 ANOMALY_CLASSIFIER_SYSTEM_PROMPT = get_anomaly_classifier_system_prompt()
+
+ANOMALY_VETO_SYSTEM_PROMPT = """You are an anomaly veto checker for a prediction market signal system.
+
+A market has been flagged because it has unusually large capital deployed on its high-confidence side despite its price being well below the certainty threshold. The quantitative scoring system thinks this is a genuine smart-money signal. Your ONLY job is to find obvious PUBLIC explanations that would make this volume UNSURPRISING.
+
+Search for:
+1. A well-known upcoming scheduled event that would make this a natural hedge (earnings, central bank meeting, election, vote, scheduled report release)
+2. Evidence this side is a popular portfolio hedge for a correlated position
+3. Evidence the volume is market-maker activity (both sides balanced, institutional book management)
+4. Any very recent public announcement that would explain why retail or institutional traders would pile on this side
+
+IMPORTANT: If you cannot find a clear, specific, verifiable explanation — output vetoed=false. Unexplained smart money is a POSITIVE signal, not a reason to veto.
+
+Do NOT veto based on:
+- General uncertainty or "anything could happen"
+- The price being low (that is the point — we expect it to be underpriced)
+- Theoretical possibilities with no real-world evidence
+
+Output ONLY valid JSON matching this exact schema:
+{"vetoed": false, "veto_reason": "", "veto_confidence": 0}
+or
+{"vetoed": true, "veto_reason": "specific public explanation found", "veto_confidence": 70}
+
+veto_confidence must be 0 when vetoed=false, and 70-100 when vetoed=true."""
+
+
+def build_anomaly_veto_prompt(candidate: dict, recency_days: int = 14) -> str:
+    """Build the veto-check prompt for an anomaly candidate."""
+    evidence = candidate.get("anomaly_evidence", {})
+    side     = candidate.get("high_confidence_side", "YES")
+    prob     = candidate.get("implied_probability", 0)
+    hc_d     = evidence.get("implied_hc_dollars", 0)
+    ratio    = evidence.get("hc_to_opp_ratio", 0)
+    days     = candidate.get("days_to_close", "?")
+
+    return f"""Anomaly veto check for this market:
+
+TITLE: {candidate.get('title', 'N/A')}
+TICKER: {candidate.get('ticker', 'N/A')}
+HIGH-CONFIDENCE SIDE: {side} @ {prob}c
+SIGNAL: ${hc_d:,} implied on {side} side | HC/opp ratio: {ratio}x
+DAYS TO CLOSE: {days}
+VOLUME: {candidate.get('volume', 'N/A')}
+OPEN INTEREST: {candidate.get('open_interest', 'N/A')}
+
+Search for any public explanation that would make this volume UNSURPRISING.
+Perform at least 2 searches before deciding.
+Search 1: "{candidate.get('title', '')} news [current month year]" — recent developments
+Search 2: Is there a scheduled event, hedge, or known catalyst for the {side} side?
+
+Output ONLY the JSON schema specified. vetoed=false if no clear public explanation found."""
 
 
 # ── Prompt builders ───────────────────────────────────────────────────────────
@@ -623,16 +675,15 @@ class Classifier:
             recency_days: window for the mandatory recency search instruction.
         """
         is_anomaly = (
-            candidate.get("candidate_type") == "anomaly"
+            "anomaly" in candidate.get("candidate_type", "")
             or "anomaly_evidence" in candidate
         )
 
         if is_anomaly:
-            system_prompt = get_anomaly_classifier_system_prompt(recency_days)
-            user_prompt = build_anomaly_prompt(candidate, recency_days)
-        else:
-            system_prompt = get_classifier_system_prompt(recency_days)
-            user_prompt = build_regular_prompt(candidate, recency_days)
+            return self._classify_anomaly(candidate)
+
+        system_prompt = get_classifier_system_prompt(recency_days)
+        user_prompt = build_regular_prompt(candidate, recency_days)
 
         pre_searched: list = []
         if research:
@@ -642,7 +693,17 @@ class Classifier:
 
         for attempt in range(self.MAX_RETRIES):
             raw = self._call_api(system_prompt, user_prompt)
-            result = self._parse_json(raw)
+            try:
+                result = self._parse_json(raw)
+            except ValueError:
+                if attempt < self.MAX_RETRIES - 1:
+                    user_prompt += (
+                        "\n\nCRITICAL: Your previous response was not valid JSON. "
+                        "You MUST output ONLY the JSON object specified — no explanations, "
+                        "no tool calls, no 'I will research' text. Start with { and end with }."
+                    )
+                    continue
+                raise
 
             # If LLM didn't populate searched_for from the pre-research list, backfill it
             # so the >= 3 validation check passes.
@@ -668,6 +729,74 @@ class Classifier:
         return validated
 
     # ── Private ───────────────────────────────────────────────────────────────
+
+    def _classify_anomaly(self, candidate: dict) -> dict:
+        """
+        Score an anomaly candidate quantitatively, then run LLM as veto filter.
+
+        Flow:
+          1. score_anomaly() → signal_score, tier (STRONG/WATCH/SKIP)
+          2. SKIP → return immediately, no LLM call
+          3. WATCH/STRONG → run veto LLM; if vetoed with confidence >= 70,
+             subtract 20 from score and re-tier
+          4. Return classification dict compatible with downstream consumers
+        """
+        from anomaly_scorer import score_anomaly, TIER_SKIP, STRONG_THRESHOLD, WATCH_THRESHOLD
+
+        scored = score_anomaly(candidate)
+        signal_score = scored["signal_score"]
+        tier         = scored["tier"]
+        breakdown    = scored["score_breakdown"]
+
+        vetoed          = False
+        veto_reason     = ""
+        veto_confidence = 0
+
+        if tier != TIER_SKIP:
+            try:
+                veto_raw    = self._call_api(ANOMALY_VETO_SYSTEM_PROMPT, build_anomaly_veto_prompt(candidate))
+                veto_result = self._parse_json(veto_raw)
+                vetoed          = bool(veto_result.get("vetoed", False))
+                veto_reason     = veto_result.get("veto_reason", "")
+                veto_confidence = int(veto_result.get("veto_confidence", 0))
+            except Exception as e:
+                veto_reason = f"veto check failed: {e}"
+
+            if vetoed and veto_confidence >= 70:
+                signal_score = max(signal_score - 20, 0)
+                if signal_score >= STRONG_THRESHOLD:
+                    tier = "STRONG"
+                elif signal_score >= WATCH_THRESHOLD:
+                    tier = "WATCH"
+                else:
+                    tier = TIER_SKIP
+
+        is_valid = tier == "STRONG"
+        errors   = [] if is_valid else [f"Tier {tier} — below STRONG threshold"]
+        if vetoed and veto_confidence >= 70:
+            errors.append(f"Vetoed: {veto_reason} (confidence {veto_confidence}%)")
+
+        return {
+            "classification":       tier,
+            "tier":                 tier,
+            "signal_score":         signal_score,
+            "score_breakdown":      breakdown,
+            "high_confidence_side": candidate.get("high_confidence_side", "YES"),
+            "confidence_score":     signal_score,
+            "vetoed":               vetoed,
+            "veto_reason":          veto_reason,
+            "veto_confidence":      veto_confidence,
+            # Fields expected by downstream — empty for anomaly path
+            "reasons":              [],
+            "confirming_signals":   [],
+            "contradicting_signals": [{"fact": f"Vetoed: {veto_reason}", "source_url": ""}] if vetoed and veto_confidence >= 70 else [],
+            "what_would_change_this": "",
+            "settlement_risk":      "",
+            "recent_developments":  "",
+            "searched_for":         [],
+            "_valid":               is_valid,
+            "_validation_errors":   errors,
+        }
 
     @classmethod
     def _resolve_model(cls) -> str:
@@ -787,22 +916,40 @@ class Classifier:
         resp.raise_for_status()
         return resp.json()["content"][0]["text"]
 
+    # Models known to support response_format json_object reliably via OpenRouter.
+    # Enforces JSON output at the API level — stronger than prompt-only instruction.
+    _JSON_MODE_MODELS = {
+        "nvidia/llama-3.3-nemotron-super-49b-v1",
+        "nvidia/nemotron-4-340b-instruct",
+        "nvidia/llama-3.1-nemotron-70b-instruct",
+        "openai/gpt-4o",
+        "openai/gpt-4o-mini",
+        "openai/gpt-4-turbo",
+        "mistralai/mistral-large",
+        "mistralai/mistral-small",
+    }
+
     def _call_openrouter(self, _req, system_prompt: str, user_prompt: str) -> str:
         model_id = self.model[len("openrouter/"):] if self.model.startswith("openrouter/") else self.model
+        payload = {
+            "model": model_id,
+            "max_tokens": self.MAX_TOKENS,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+        # Enforce JSON output at API level when the model supports it.
+        # Prevents models from returning conversational "I'll research..." text.
+        if model_id in self._JSON_MODE_MODELS or "nemotron" in model_id.lower():
+            payload["response_format"] = {"type": "json_object"}
         resp = _req.post(
             "https://openrouter.ai/api/v1/chat/completions",
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "content-type": "application/json",
             },
-            json={
-                "model": model_id,
-                "max_tokens": self.MAX_TOKENS,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            },
+            json=payload,
             timeout=90,
         )
         resp.raise_for_status()

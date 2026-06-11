@@ -196,8 +196,14 @@ class OpportunityManager:
             ticker = candidate.get("ticker", "")
             side = classification.get("high_confidence_side", "YES")
 
-            # Only process CERTAIN classifications
-            if classification.get("classification") != "CERTAIN":
+            # Only process CERTAIN (regular) or STRONG (anomaly) classifications
+            cls_value     = classification.get("classification")
+            is_certain    = cls_value == "CERTAIN"
+            is_strong_anomaly = (
+                cls_value == "STRONG"
+                and "anomaly" in candidate.get("candidate_type", "")
+            )
+            if not is_certain and not is_strong_anomaly:
                 to_log.append({
                     **cm,
                     "routing": "skipped_not_certain",
@@ -221,7 +227,12 @@ class OpportunityManager:
             edge = self.compute_edge(cm)
             exec_price = self._exec_price(candidate, side)
             bid_price = candidate.get("implied_probability", 0) / 100.0  # for display only
-            true_prob = classification.get("confidence_score", 95) / 100.0
+            if is_strong_anomaly:
+                # Anomaly: LLM hasn't estimated true_prob. Use market bid + 20c as conservative
+                # estimate that smart money is roughly correct. Capped at 90%.
+                true_prob = min(bid_price + 0.20, 0.90)
+            else:
+                true_prob = classification.get("confidence_score", 95) / 100.0
 
             platform = candidate.get("platform", "Kalshi")
             category = candidate.get("category", "") if platform == "Polymarket" else None
