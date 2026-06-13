@@ -291,40 +291,53 @@ class PolymarketScanner:
 
     def incremental_scan(self):
         """
-        Incremental: fetch markets directly (faster than events), filter for price changes.
+        Incremental: fetch events (for proper category data), filter by price change.
         Caps at incremental_max_pages to avoid timeout.
         """
         max_pages = self.config.get("incremental_max_pages", 5)
-        print(f"[PolymarketScanner] Incremental scan ({max_pages} pages)")
+        print(f"[PolymarketScanner] Incremental scan via events ({max_pages} pages)")
 
         candidates = []
-        cursor = None
+        events_seen = 0
+        markets_seen = 0
+        offset = 0
 
         for page in range(max_pages):
             try:
-                markets_raw, cursor = self.client.get_markets(limit=100, cursor=cursor)
+                events, has_more = self.client.get_events(limit=100, offset=offset)
             except Exception as e:
-                print(f"[PolymarketScanner] Incremental fetch error: {e}")
+                print(f"[PolymarketScanner] Incremental fetch error page {page}: {e}")
                 break
 
-            if not markets_raw:
+            if not events:
                 break
 
-            for raw_m in markets_raw:
-                m = self.client.normalize_market(raw_m)
-                ticker = m["ticker"]
-                if self._price_changed(ticker, m) and self._passes_filters(m):
-                    cat = m.get("category")
-                    if cat in self.config["scan_categories"]:
+            offset += len(events)
+
+            for event in events:
+                events_seen += 1
+                cat = self.client.map_event_category(event)
+                if cat not in self.config["scan_categories"]:
+                    continue
+
+                for raw_m in event.get("markets", []):
+                    markets_seen += 1
+                    m = self.client.normalize_market(raw_m, event)
+                    ticker = m["ticker"]
+
+                    if self._price_changed(ticker, m) and self._passes_filters(m):
                         side = self._high_confidence_side(m)
                         candidates.append(self._enrich_candidate(m, side, "pm_incremental_scan"))
-                self._update_cache(ticker, m)
 
-            if not cursor:
+                    self._update_cache(ticker, m)
+
+            if not has_more:
                 break
 
         self._save_cache()
-        print(f"[PolymarketScanner] Incremental complete: {len(candidates)} candidates")
+        candidates.sort(key=lambda c: c.get("urgency_score", 0), reverse=True)
+        print(f"[PolymarketScanner] Incremental complete: {events_seen} events, {markets_seen} markets, "
+              f"{len(candidates)} candidates")
         return candidates
 
     def anomaly_scan(self):
