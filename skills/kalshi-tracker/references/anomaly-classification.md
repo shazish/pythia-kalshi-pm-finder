@@ -182,11 +182,11 @@ These are placeholders — they keep the candidate in the pipeline for monitorin
 Anomaly mode uses the same two-phase pipeline as all other modes. See `references/two-phase-pipeline.md`.
 
 ```
-python3 kalshi-pm-analyzer anomaly          # scan → cache/anomaly_candidates.json
+python3 pythia-main anomaly          # scan → cache/anomaly_candidates.json
 # Phase 1: Owl Alpha research subagents → cache/research_batch{N}.json
 python3 scripts/classify_all.py             # Phase 2 → cache/classified.json
 python3 scripts/verify_classifications.py   # Step 3
-python3 kalshi-pm-analyzer finalize         # Excel report
+python3 pythia-main finalize         # Excel report
 ```
 
 ### Expected Outcomes

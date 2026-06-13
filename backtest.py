@@ -13,7 +13,7 @@ each run until they settle.
 
 Usage:
     python3 backtest.py                  # full run, print report
-    python3 kalshi-pm-analyzer backtest  # same, via cron entry point
+    python3 pythia-main backtest  # same, via cron entry point
 """
 import json
 import os

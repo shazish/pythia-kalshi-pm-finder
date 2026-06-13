@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-kalshi-pm-analyzer — Full pipeline runner for Kalshi/Polymarket analysis.
+pythia-main — Full pipeline runner for Kalshi/Polymarket analysis.
 
 USAGE:
-    ./kalshi-pm-analyzer <mode> [--model MODEL]
-    ./kalshi-pm-analyzer finalize
-    ./kalshi-pm-analyzer backtest
+    ./pythia-main <mode> [--model MODEL]
+    ./pythia-main finalize
+    ./pythia-main backtest
 
 MODES:
     incremental | full | deep | anomaly
@@ -186,7 +186,7 @@ def _clean_cache():
             os.remove(path)
             deleted.append(name)
     if deleted:
-        print(f"[kalshi-pm-analyzer] Cleaned {len(deleted)} stale artifact(s) from cache/")
+        print(f"[pythia-main] Cleaned {len(deleted)} stale artifact(s) from cache/")
 
 
 # ── Run-folder management ─────────────────────────────────────────────────────
@@ -208,7 +208,7 @@ def _init_run(mode):
 
     with open(CURRENT_RUN_POINTER, "w") as f:
         f.write(run_dir)
-    print(f"[kalshi-pm-analyzer] Run folder: logs/{run_dir}/")
+    print(f"[pythia-main] Run folder: logs/{run_dir}/")
     return run_path, run_dir
 
 
@@ -302,9 +302,9 @@ def _archive_run(excel_path, run_path, run_dir, cache_dir: Path = None):
     if excel_path != excel_in_run and os.path.exists(excel_path):
         shutil.move(excel_path, excel_in_run)
     if already_in_run:
-        print(f"[kalshi-pm-analyzer] Archived run → logs/{run_dir}/  (artifacts already in run folder + Excel)")
+        print(f"[pythia-main] Archived run → logs/{run_dir}/  (artifacts already in run folder + Excel)")
     else:
-        print(f"[kalshi-pm-analyzer] Archived run → logs/{run_dir}/  ({copied} cache artifacts + Excel)")
+        print(f"[pythia-main] Archived run → logs/{run_dir}/  ({copied} cache artifacts + Excel)")
     return run_dir
 
 
@@ -313,21 +313,21 @@ def _archive_run(excel_path, run_path, run_dir, cache_dir: Path = None):
 def finalize():
     from pipeline_logger import get_logger
     from classifier import validate_classification
-    log = get_logger("kalshi-pm-analyzer")
+    log = get_logger("pythia-main")
 
     # Snapshot cache dir now — _init_run() (called below as fallback) may change KALSHI_CACHE_DIR
     _cache_dir = _run_cache()
     classified_path = str(_cache_dir / "classified.json")
     if not os.path.exists(classified_path):
         log.error("No classified.json found at %s. Classification step must run first.", classified_path)
-        print("[kalshi-pm-analyzer] No classified.json found. Classification step must run first.")
+        print("[pythia-main] No classified.json found. Classification step must run first.")
         sys.exit(1)
 
     try:
         with open(classified_path) as f:
             classified = json.load(f)
     except json.JSONDecodeError as e:
-        print(f"[kalshi-pm-analyzer] classified.json is malformed — cannot finalize: {e}")
+        print(f"[pythia-main] classified.json is malformed — cannot finalize: {e}")
         sys.exit(1)
 
     log.info("finalize() started — %d entries loaded from classified.json", len(classified))
@@ -390,7 +390,7 @@ def finalize():
         to_notify, to_log = mgr.process(classified)
     except Exception as e:
         log.error("OpportunityManager failed: %s", e)
-        print(f"[kalshi-pm-analyzer] ERROR: opportunity manager failed: {e}", file=sys.stderr)
+        print(f"[pythia-main] ERROR: opportunity manager failed: {e}", file=sys.stderr)
         try:
             from pipeline_run_log import RunLog
             rl = RunLog.for_current_run()
@@ -403,16 +403,16 @@ def finalize():
     if to_log:
         n = mgr.log_to_dashboard(to_log)
         log.info("Logged %d entries to dashboard", n)
-        print(f"[kalshi-pm-analyzer] Logged {n} entries to dashboard")
+        print(f"[pythia-main] Logged {n} entries to dashboard")
 
     if to_notify:
         log.info("Reporting %d opportunities", len(to_notify))
-        print(f"\n[kalshi-pm-analyzer] {len(to_notify)} OPPORTUNITIES:")
+        print(f"\n[pythia-main] {len(to_notify)} OPPORTUNITIES:")
         for opp in to_notify:
             print("\n" + mgr.format_notification(opp))
     else:
         log.info("No opportunities above threshold")
-        print("[kalshi-pm-analyzer] No opportunities above threshold.")
+        print("[pythia-main] No opportunities above threshold.")
 
     run_path, run_dir = _get_current_run()
     if run_path is None:
@@ -425,7 +425,7 @@ def finalize():
         result_path = export_excel(to_notify, to_log, excel_path, mode_label=mode_label)
     except Exception as e:
         log.error("Excel export failed: %s", e)
-        print(f"[kalshi-pm-analyzer] ERROR: Excel export failed: {e}", file=sys.stderr)
+        print(f"[pythia-main] ERROR: Excel export failed: {e}", file=sys.stderr)
         try:
             from pipeline_run_log import RunLog
             rl = RunLog.for_current_run()
@@ -460,7 +460,7 @@ def finalize():
         pass
 
     log.info("Report saved → logs/%s/", run_dir)
-    print(f"\n[kalshi-pm-analyzer] Run complete → logs/{run_dir}/")
+    print(f"\n[pythia-main] Run complete → logs/{run_dir}/")
 
 
 # ── Batch writing ─────────────────────────────────────────────────────────────
@@ -492,7 +492,7 @@ def _write_batches(candidates: list) -> list:
 
 # ── Instruction printing ──────────────────────────────────────────────────────
 
-def _print_instructions(mode: str, candidates: list, run_dir: str, batches: list, model_override: str = None) -> None:
+def _instruct_agent(mode: str, candidates: list, run_dir: str, batches: list, model_override: str = None) -> None:
     is_anomaly = "anomaly" in mode
     n = len(candidates)
     classifier_prompt_fn = "get_classifier_system_prompt()"
@@ -816,7 +816,7 @@ STEP 5 — FINALIZE
 
 Run after verification:
 
-  python3 kalshi-pm-analyzer finalize
+  python3 pythia-main finalize
 
 Archives cache artifacts to logs/{run_dir}/ and exports the Excel report.
 Pipeline complete when finalize exits 0.
@@ -827,26 +827,7 @@ Pipeline complete when finalize exits 0.
 # ── Banner ────────────────────────────────────────────────────────────────────
 
 def _print_banner() -> None:
-    print("""
-        @@@@@@@  @@@@@@@@@@@@@@  @@@@@@@
-        @@@@@@@@  @@@@@@@@@@@@  @@@@@@@@
-          @@@@@     @@@@@@@@     @@@@@
-           @@@@     @@@@@@@@     @@@@
-           @@@@     @@@@@@@@     @@@@
-           @@@@     @@@@@@@@     @@@@
-           @@@@     @@@@@@@@     @@@@
-           @@@@@    @@@@@@@@    @@@@@
-           %@@@@@@@@@@@@@@@@@@@@@@@@@
-            @@@@@@@@@@@@@@@@@@@@@@@
-              @@@@@@@@@@@@@@@@@@@
-                  @@@@@@@@@@@
-                    @@@@@@@
-                     @@@@@
-                     @@@@@
-                  @@@@@@@@@@@
-                  @@@@@@@@@@@
-
-          · · · · · · · · · · · · · ·
+    print(""".
 
   @@@@@   @@  @@  @@@@@@  @@  @@  @@@@@@    @@
   @@  @@  @@  @@    @@    @@  @@    @@     @@@@
@@ -855,9 +836,12 @@ def _print_banner() -> None:
   @@        @@      @@    @@  @@    @@    @@  @@
   @@        @@      @@    @@  @@  @@@@@@  @@  @@
 
+  Prediction Intelligence for Kalshi & Polymarket
         · · · · · · · · · · · · ·
-
-     PREDICTION  INTELLIGENCE
+        
+Parameters:
+◌ <mode> (positional, required): incremental | full | deep | anomaly | pm-incremental | pm-full | pm-deep | pm-anomaly
+◌ --model MODEL (optional): override the classification model (e.g. openrouter/owl-alpha; defaults to in-context Hermes)
 """)
 
 
@@ -877,6 +861,7 @@ def main() -> None:
         return
 
     model_override = None
+    dry_run = False
     if "--model" in args:
         idx = args.index("--model")
         if idx + 1 >= len(args):
@@ -884,14 +869,18 @@ def main() -> None:
             sys.exit(1)
         model_override = args[idx + 1]
         args = [a for i, a in enumerate(args) if i != idx and i != idx + 1]
+    if "--dry-run" in args:
+        dry_run = True
+        args.remove("--dry-run")
 
     if not args or args[0] not in VALID_MODES:
-        print("Usage: kalshi-pm-analyzer <mode> [--model MODEL]")
-        print("       kalshi-pm-analyzer finalize")
-        print("       kalshi-pm-analyzer backtest")
+        print("Usage: pythia-main <mode> [--model MODEL] [--dry-run]")
+        print("       pythia-main finalize")
+        print("       pythia-main backtest")
         print(f"Modes: {' | '.join(VALID_MODES)}")
         print("  --model MODEL  Use a specific model for classification (e.g. openrouter/owl-alpha).")
         print("                 Default: Hermes classifies in-context, no external API key needed.")
+        print("  --dry-run      Print pipeline instructions without running a scan.")
         sys.exit(1)
 
     mode = args[0]
@@ -904,7 +893,21 @@ def main() -> None:
 
     run_path, run_dir = _init_run(mode)
 
-    print(f"[kalshi-pm-analyzer] Running {mode} scan...")
+    if dry_run:
+        print(f"[pythia-main] DRY RUN — skipping scan, generating dummy candidates for preview")
+        import math
+        n_dummy = 60
+        candidates = [{"ticker": f"KXDRY{i:03d}", "title": f"Dummy market {i}", "subtitle": "", "event_ticker": f"KXDRY{i:03d}-EVT", "series_ticker": f"KXDRY{i:03d}", "category": "Politics", "yes_bid": 10, "yes_ask": 15, "no_bid": 85, "no_ask": 90, "volume": 10000, "open_interest": 5000, "status": "active", "close_date": "2026-12-31T23:59:00Z", "days_to_close": max(1, 200 - i), "platform": "Kalshi", "settlement_currency": "USD", "rules_primary": "Dummy rule for testing.", "rules_secondary": "", "high_confidence_side": "NO", "implied_probability": 85, "volume_anomaly": None, "urgency_score": 50.0, "scan_type": f"dummy_{mode}_scan", "scanned_at": "2026-06-13T00:00:00Z"} for i in range(n_dummy)]
+        cand_file = str(_candidates_path(mode))
+        scan_duration = 0.0
+        print(f"[pythia-main] Generated {len(candidates)} dummy candidates (dry run)")
+        batches = _write_batches(candidates)
+        print(f"[pythia-main] Wrote {len(batches)} batch file(s) to logs/{run_dir}/")
+        print(f"[pythia-main] Dry run — instructions follow below. Run without --dry-run to execute.")
+        _instruct_agent(mode, candidates, run_dir, batches, model_override)
+        return
+
+    print(f"[pythia-main] Running {mode} scan...")
     try:
         if mode == "anomaly":
             candidates = run_anomaly_scan()
@@ -916,7 +919,7 @@ def main() -> None:
     except Exception as e:
         import traceback
         msg = f"Scan failed ({mode}): {e}\n{traceback.format_exc()}"
-        print(f"[kalshi-pm-analyzer] ERROR: {msg}", file=sys.stderr)
+        print(f"[pythia-main] ERROR: {msg}", file=sys.stderr)
         try:
             from pipeline_run_log import RunLog
             log = RunLog.for_current_run()
@@ -927,10 +930,10 @@ def main() -> None:
         sys.exit(1)
 
     scan_duration = time.time() - t0
-    print(f"[kalshi-pm-analyzer] Scanner found {len(candidates)} candidates")
+    print(f"[pythia-main] Scanner found {len(candidates)} candidates")
 
     if not candidates:
-        print("[kalshi-pm-analyzer] No candidates. Pipeline done.")
+        print("[pythia-main] No candidates. Pipeline done.")
         sys.exit(0)
 
     _copy_to_run(cand_file, run_path)
@@ -938,7 +941,7 @@ def main() -> None:
     # Pre-write batch files so subagents have input ready (not needed for anomaly — scorer, not research)
     if "anomaly" not in mode:
         batches = _write_batches(candidates)
-        print(f"[kalshi-pm-analyzer] Wrote {len(batches)} batch file(s) to logs/{run_dir}/")
+        print(f"[pythia-main] Wrote {len(batches)} batch file(s) to logs/{run_dir}/")
     else:
         batches = []
 
@@ -949,12 +952,12 @@ def main() -> None:
         if run_log:
             run_log.write_header(mode, run_dir)
             run_log.step_scan(mode, len(candidates), scan_duration, batches, Path(cand_file).name)
-            print(f"[kalshi-pm-analyzer] Run log: logs/{run_dir}/pipeline_run.md")
+            print(f"[pythia-main] Run log: logs/{run_dir}/pipeline_run.md")
     except Exception as e:
-        print(f"[kalshi-pm-analyzer] WARNING: could not write run log: {e}")
+        print(f"[pythia-main] WARNING: could not write run log: {e}")
 
     # Print instructions for steps 2-5
-    _print_instructions(mode, candidates, run_dir, batches, model_override)
+    _instruct_agent(mode, candidates, run_dir, batches, model_override)
 
 
 if __name__ == "__main__":

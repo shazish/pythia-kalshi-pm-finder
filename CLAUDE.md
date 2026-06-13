@@ -16,7 +16,7 @@ The right form: "The design calls for X. That will take Y steps/time. Do you wan
 
 ## Pipeline architecture
 
-See `kalshi-pm-analyzer:_print_instructions()` for the canonical step-by-step.  
+See `pythia-main:_instruct_agent()` for the canonical step-by-step.  
 The summary below is the source of truth for how each phase must work.
 
 ### Phase 1 — Research (Owl Alpha subagents, sequential)
@@ -41,5 +41,5 @@ The summary below is the source of truth for how each phase must work.
 - Downgrades hallucinated or market-contradicted CERTAIN entries to LIKELY
 
 ### Finalize
-- Run `python3 kalshi-pm-analyzer finalize`
+- Run `python3 pythia-main finalize`
 - Archives all cache artifacts to the active run folder and exports the Excel report

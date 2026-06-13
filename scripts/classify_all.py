@@ -80,6 +80,12 @@ def make_classified_entry(candidate: dict, classification: dict) -> dict:
 parser = argparse.ArgumentParser()
 parser.add_argument("--run-dir", default=None)
 parser.add_argument("--model", default=None, help="Override model (e.g. openrouter/owl-alpha)")
+parser.add_argument("--mode", default="auto", choices=["auto", "api", "subagent"],
+                    help="Classification mode: auto=detect, api=external API, subagent=opencode subagents")
+parser.add_argument("--merge", action="store_true",
+                    help="Merge completed subagent chunk files into classified.json")
+parser.add_argument("--subagent-count", type=int, default=6,
+                    help="Number of subagent chunks to split into (default: 6)")
 args = parser.parse_args()
 
 if args.model:
@@ -87,7 +93,7 @@ if args.model:
 
 run_dir = args.run_dir
 if not run_dir:
-    crfile = REPO / "logs" / ".current_run"   # written by kalshi-pm-analyzer
+    crfile = REPO / "logs" / ".current_run"   # written by pythia-main
     if crfile.exists():
         run_dir = crfile.read_text().strip()
 
@@ -173,7 +179,85 @@ if CLASSIFIED_FILE.exists():
 
 remaining = [c for c in all_candidates if c["ticker"] not in done]
 
-# ── Init classifier ───────────────────────────────────────────────────────────
+# ── Merge mode: combine completed subagent chunks ────────────────────────────
+CHUNK_DIR = _run_cache()
+if args.merge:
+    import glob as _glob
+    merged = list(existing)
+    merged_tickers = set(done)
+    chunk_files = sorted(_glob.glob(str(CHUNK_DIR / "classified_chunk_*.json")))
+    if not chunk_files:
+        print("[classify_all] No chunk files found to merge.")
+        sys.exit(0)
+    for cf in chunk_files:
+        chunk = json.load(open(cf))
+        for entry in chunk:
+            ticker = entry.get("candidate", entry).get("ticker", "")
+            if ticker not in merged_tickers:
+                merged.append(entry)
+                merged_tickers.add(ticker)
+    _save(merged)
+    for cf in chunk_files:
+        Path(cf).unlink(missing_ok=True)
+    print(f"[classify_all] Merged {len(chunk_files)} chunks → {len(merged)} total classified")
+    sys.exit(0)
+
+# ── Subagent mode: split into chunks, print instructions, exit ──────────────
+if args.mode == "subagent":
+    if not remaining:
+        print("[classify_all] All candidates already classified.")
+        sys.exit(0)
+    n = min(args.subagent_count, len(remaining))
+    chunk_size = len(remaining) // n
+    remainder = len(remaining) % n
+    for i in range(n):
+        start = i * chunk_size + min(i, remainder)
+        end = start + chunk_size + (1 if i < remainder else 0)
+        chunk = remaining[start:end]
+        json.dump(chunk, open(CHUNK_DIR / f"remaining_chunk_{i}.json", "w"))
+    # Build research index as a single file for subagents
+    json.dump(research_index, open(CHUNK_DIR / "research_index.json", "w"))
+
+    print(SEP)
+    chunk_sizes = [chunk_size + (1 if i < remainder else 0) for i in range(n)]
+    print(f"SUBAGENT MODE — split into {n} chunks ({len(remaining)} remaining)")
+    print(SEP)
+    print(f"  {len(done)} already classified, {len(remaining)} remaining")
+    print(f"  Chunk sizes: {', '.join(str(s) for s in chunk_sizes)}")
+    print()
+
+    print("Steps:")
+    print(f"  1. Spawn {n} task subagents in parallel, one per chunk below.")
+    print("     Each subagent reads chunk + research_index.json and writes classified_chunk_N.json.")
+    print(f"  2. After all complete, merge:")
+    print(f"     python3 scripts/classify_all.py --run-dir {args.run_dir} --merge")
+    print(f"  3. Then verify + finalize:")
+    print(f"     python3 scripts/verify_classifications.py")
+    print(f"     python3 cli.py finalize")
+    print()
+    print("Subagent task prompts (paste into task tool calls):")
+    for i in range(n):
+        actual_size = chunk_size + (1 if i < remainder else 0)
+        print()
+        print(f"  ┌─ Chunk {i} ({actual_size} candidates: remaining_chunk_{i}.json)")
+        print(f"  │ Classify chunk {i} by reading remaining_chunk_{i}.json and")
+        print(f"  │ research_index.json. Use own LLM reasoning. Write results to")
+        print(f"  │ classified_chunk_{i}.json.")
+        print(f"  │ Output: list of {{candidate, classification}} dicts.")
+        print(f"  │ Process ALL {actual_size} candidates.")
+        print(f"  └──────────────────────────────────────────────")
+    sys.exit(0)
+
+# ── API mode: auto-detect opencode and suggest subagent mode ────────────────
+if args.mode == "auto":
+    try:
+        from session_utils import in_opencode_session, suggest_subagent_mode
+        if in_opencode_session() and remaining:
+            print(suggest_subagent_mode(), flush=True)
+    except Exception:
+        pass
+
+# ── Init classifier (API mode only) ─────────────────────────────────────────
 clf = Classifier()
 
 # ── Banner ────────────────────────────────────────────────────────────────────

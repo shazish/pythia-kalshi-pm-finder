@@ -58,7 +58,7 @@ IMPORTANT: Do NOT use a pattern-matching Python script. The classification must 
 
 After both phases complete:
 1. Merge results_batch0.json + results_batch1.json + results_batch2.json into cache/classified.json
-2. Run: python3 ~/kalshi-tracker/kalshi-pm-analyzer finalize
+2. Run: python3 ~/kalshi-tracker/pythia-main finalize
 3. Also produce CSV: use execute_code to read classified.json and write logs/kalshi_{timestamp}.csv
 
 ## Classification Rules (from validate_classification)

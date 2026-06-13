@@ -22,7 +22,7 @@ high-certainty betting opportunities.
           │
           ▼
 ┌───────────────────────────────┐
-│ kalshi-pm-analyzer [mode]    │  runs scan + prints pipeline instructions
+│ pythia-main [mode]    │  runs scan + prints pipeline instructions
 │ (entry point for all modes)  │  (script is the single source of truth)
 └──────────────┬───────────────┘
                │
@@ -69,7 +69,7 @@ high-certainty betting opportunities.
 
 | File | Purpose |
 |------|---------|
-| `kalshi-pm-analyzer` | **Single entry point** for all modes. Runs scan and prints pipeline instructions. |
+| `pythia-main` | **Single entry point** for all modes. Runs scan and prints pipeline instructions. |
 | `scanner.py` | Scanner — category filtering (now includes Health, Finance), combo detection, caching |
 | `anomaly_scanner.py` | Volume-first smart-money anomaly scanner |
 | `polymarket_scanner.py` | Polymarket scanner (USDC settlement) |
@@ -92,7 +92,7 @@ high-certainty betting opportunities.
 cd ~/kalshi-tracker
 
 # 1. Scan + print instructions
-python3 kalshi-pm-analyzer [mode]
+python3 pythia-main [mode]
 
 # mode: incremental | full | deep | anomaly | pm-incremental | pm-full | pm-deep | pm-anomaly
 
@@ -119,7 +119,7 @@ python3 kalshi-pm-analyzer [mode]
 #      If side=NO and YES implied_probability < 50 → likely a false positive, restore CERTAIN.
 
 # 5. Finalize → Excel + CSV
-python3 kalshi-pm-analyzer finalize
+python3 pythia-main finalize
 
 ⚠ If finalize crashes with ModuleNotFoundError for pipeline_logger, the file was likely
    deleted during cleanup. See references/pitfalls.md #42 for the minimal replacement.
@@ -154,7 +154,7 @@ python3 kalshi-pm-analyzer finalize
 
 8 jobs, all paused. The cron prompt for each is simply:
 ```
-cd ~/kalshi-tracker && python3 kalshi-pm-analyzer [mode]
+cd ~/kalshi-tracker && python3 pythia-main [mode]
 ```
 Follow the printed TWO-PHASE CLASSIFICATION INSTRUCTIONS.
 
@@ -169,7 +169,7 @@ Follow the printed TWO-PHASE CLASSIFICATION INSTRUCTIONS.
 | polymarket-full-scan | 0 0 * * * | |
 | polymarket-anomaly-scan | 0 */6 * * * | |
 
-Skills are NOT attached to cron jobs — `kalshi-pm-analyzer` self-describes the two-phase flow.
+Skills are NOT attached to cron jobs — `pythia-main` self-describes the two-phase flow.
 
 ## Classification Results (May 2026 deep scan, 150 candidates)
 

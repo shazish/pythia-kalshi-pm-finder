@@ -79,6 +79,7 @@ def cmd_finalize(args):
     from opportunity_manager import OpportunityManager
     from excel_reporter import export_excel
     from datetime import datetime
+    from collections import Counter
     from classifier import validate_classification
 
     classified_file = os.path.join(SKILL_DIR, "cache", "classified.json")
@@ -107,8 +108,17 @@ def cmd_finalize(args):
     else:
         print("No opportunities above threshold.")
 
+    # Derive mode from most common scan_type in classified data
+    mode_counts = Counter()
+    for e in classified:
+        c = e.get("candidate", e)
+        st = c.get("scan_type", "")
+        if st:
+            mode_counts[st] += 1
+    mode = mode_counts.most_common(1)[0][0] if mode_counts else "unknown"
+
     ts = datetime.now().strftime("%Y%m%d_%H%M")
-    xlsx = os.path.join(SKILL_DIR, "logs", f"kalshi_{ts}.xlsx")
+    xlsx = os.path.join(SKILL_DIR, "logs", f"kalshi_{mode}_{ts}.xlsx")
     result = export_excel(to_notify, to_log, xlsx)
     print(f"\nReport: {result}")
 
@@ -134,6 +144,8 @@ def main():
 
     p_cls = sub.add_parser("classify", help="Classify candidates (requires LLM)")
     p_cls.add_argument("file", help="Path to candidates.json")
+    p_cls.add_argument("--mode", default="auto", choices=["auto", "api", "subagent"],
+                       help="Classification mode: auto=detect, api=external API, subagent=opencode subagents")
 
     sub.add_parser("finalize", help="Generate Excel report from classified.json")
     sub.add_parser("backtest", help="Prepare backtest candidates")

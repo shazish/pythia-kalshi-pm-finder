@@ -4,7 +4,7 @@ demo_research_filtering.py — Demonstration of how to use research_utils.py
 to filter research results for improved classification quality.
 
 This script shows the recommended workflow for applying research filtering
-as described in the updated _print_instructions() in kalshi-pm-analyzer.
+as described in the updated _instruct_agent() in pythia-main.
 """
 
 import json
@@ -15,7 +15,7 @@ from research_utils import filter_research_batch
 def main():
     print("=== Research Filtering Demo ===\n")
     
-    # Example: Load research batches (as would be done in kalshi-pm-analyzer)
+    # Example: Load research batches (as would be done in pythia-main)
     cache_dir = os.path.join(os.path.dirname(__file__), 'cache')
     
     # For demo purposes, let's create some sample research data

@@ -117,7 +117,7 @@ kalshi-tracker/
 ├── backtest_agent.py       # Historical evaluation
 ├── market_clusterer.py     # Multi-market clustering
 ├── config.yaml             # Configuration
-├── kalshi-pm-analyzer      # Pipeline entry point (scan + two-phase instructions)
+├── pythia-main      # Pipeline entry point (scan + two-phase instructions)
 ├── scripts/                # Batch classification + verify scripts
 ├── tmp/                    # Temp scripts (not committed)
 ├── docs/                   # HTML architecture diagrams
