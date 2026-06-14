@@ -597,6 +597,129 @@ class ScannerAgent:
             return market.get("yes_bid", 0) or 0
         return market.get("no_bid", 0) or 0
 
+    # ── Tier inversion detection ───────────────────────────────────
+
+    def detect_tier_inversions(self):
+        """
+        Scan the market cache for series where nested threshold tiers violate
+        monotonicity — a mathematical impossibility indicating at least one tier
+        is mispriced.
+
+        For "above T" markets (ticker suffix -T{value}):
+            P(above lower_threshold) >= P(above higher_threshold) always.
+        Violation: P(lower) < P(higher).
+
+        Arb: BUY YES(lower_T) + BUY NO(higher_T).
+        Since B ⊆ A (if X > T_high then X > T_low), at least one leg always pays.
+        Guaranteed profit when YES_ask(lower) + NO_ask(higher) < 100¢.
+
+        Only checks tier pairs where BOTH sides have spread <= spread_max * 2
+        to avoid flagging illiquid noise.
+        """
+        import re
+        tier_pattern = re.compile(r'^(.+)-T([\d.]+)$')
+        spread_limit = self.config["spread_max"] * 2
+        min_vol = self.config["min_volume"]
+        fee_rate = 0.015  # Kalshi taker fee on profits
+
+        # Group cached active tickers by series prefix
+        series = {}
+        for ticker, data in self.cache["markets"].items():
+            if data.get("status") in ("settled", "closed"):
+                continue
+            m = tier_pattern.match(ticker)
+            if not m:
+                continue
+            try:
+                threshold = float(m.group(2))
+            except ValueError:
+                continue
+            series.setdefault(m.group(1), []).append((threshold, ticker, data))
+
+        inversions = []
+        now = datetime.now(timezone.utc).isoformat()
+
+        for prefix, tiers in series.items():
+            if len(tiers) < 2:
+                continue
+            tiers.sort(key=lambda x: x[0])
+
+            for i in range(len(tiers) - 1):
+                t_low, tk_low, d_low = tiers[i]
+                t_high, tk_high, d_high = tiers[i + 1]
+
+                bid_low  = d_low.get("yes_bid", 0) or 0
+                ask_low  = d_low.get("yes_ask", 0) or 0
+                bid_high = d_high.get("yes_bid", 0) or 0
+                ask_high = d_high.get("yes_ask", 0) or 0
+                no_ask_high = d_high.get("no_ask", 0) or 0
+                vol_low  = d_low.get("volume", 0) or 0
+                vol_high = d_high.get("volume", 0) or 0
+
+                # Skip illiquid tiers — spreads too wide to trust bid as signal
+                spread_low  = ask_low - bid_low if ask_low and bid_low else 999
+                spread_high = ask_high - bid_high if ask_high and bid_high else 999
+                if spread_low > spread_limit or spread_high > spread_limit:
+                    continue
+
+                # Skip thin markets
+                if vol_low < min_vol or vol_high < min_vol:
+                    continue
+
+                # Monotonicity check: P(above lower) must >= P(above higher)
+                if bid_low >= bid_high:
+                    continue
+
+                gap = bid_high - bid_low  # how far the violation is
+
+                # Arb cost: buy YES(lower_T) + buy NO(higher_T)
+                total_cost = ask_low + no_ask_high
+
+                # Minimum guaranteed payout = 100¢ (at least one leg always wins)
+                # Worst-case scenario: X > T_high (both YES legs win, NO leg loses)
+                # Net = profit on YES(lower) - cost of NO(higher)
+                profit_if_both_yes = (100 - ask_low) * (1 - fee_rate) - no_ask_high
+                # Other scenario: X <= T_low (NO(higher) wins, YES(lower) loses)
+                profit_if_both_no  = (100 - no_ask_high) * (1 - fee_rate) - ask_low
+
+                min_net = min(profit_if_both_yes, profit_if_both_no)
+                guaranteed = min_net > 0
+
+                inversions.append({
+                    "type": "tier_inversion",
+                    "series_prefix": prefix,
+                    "lower_tier": {
+                        "ticker": tk_low,
+                        "threshold": t_low,
+                        "yes_bid": bid_low,
+                        "yes_ask": ask_low,
+                        "spread": spread_low,
+                        "volume": vol_low,
+                    },
+                    "higher_tier": {
+                        "ticker": tk_high,
+                        "threshold": t_high,
+                        "yes_bid": bid_high,
+                        "yes_ask": ask_high,
+                        "no_ask": no_ask_high,
+                        "spread": spread_high,
+                        "volume": vol_high,
+                    },
+                    "violation": f"P(>T{t_low}) = {bid_low}¢ < P(>T{t_high}) = {bid_high}¢  (gap={gap}¢)",
+                    "trade": f"BUY YES({tk_low}) @ {ask_low}¢  +  BUY NO({tk_high}) @ {no_ask_high}¢",
+                    "total_cost_cents": total_cost,
+                    "min_net_profit_cents": round(min_net, 2),
+                    "guaranteed_profit": guaranteed,
+                    "bid_gap": gap,
+                    "detected_at": now,
+                })
+
+        inversions.sort(key=lambda x: (-int(x["guaranteed_profit"]), -x["bid_gap"]))
+        if inversions:
+            print(f"[Scanner] Tier inversions found: {len(inversions)} "
+                  f"({sum(1 for x in inversions if x['guaranteed_profit'])} guaranteed arb)")
+        return inversions
+
     # ── Output ─────────────────────────────────────────────────────
 
     def save_candidates(self, candidates, path=None):

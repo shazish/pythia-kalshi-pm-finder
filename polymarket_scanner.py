@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     "anomaly_spread_max":   10,    # cents — anomaly scan; 20-79c markets have wider spreads
     "min_volume":            1000,  # USDC — higher floor than Kalshi contracts
     "price_change_threshold": 3,    # cents
+    "max_ask_price":         95,    # cents — upper ceiling; ask ≥96 can't clear 3% edge after fees
     "max_pages":             30,    # events pages per full scan
     "scan_categories": ["Politics", "Economics", "Entertainment", "World", "Science", "Health", "Finance"],
     "cache_file":      os.path.expanduser("~/.hermes/kalshi-tracker/cache/pm_cache.json"),
@@ -108,6 +109,12 @@ class PolymarketScanner:
 
         if not (yes_bid >= threshold or no_bid >= threshold):
             return False
+
+        # Upper ask ceiling: ask ≥96 can't clear 3% edge after PM fees
+        hc_ask = (market.get("yes_ask", 0) or 0) if yes_bid >= no_bid else (market.get("no_ask", 0) or 0)
+        if hc_ask and hc_ask >= self.config["max_ask_price"]:
+            return False
+
         if volume < self.config["min_volume"]:
             return False
 
