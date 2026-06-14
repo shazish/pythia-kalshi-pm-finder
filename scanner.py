@@ -362,6 +362,7 @@ class ScannerAgent:
         # Sort by urgency score descending — most actionable first
         all_candidates.sort(key=lambda c: c.get("urgency_score", 0), reverse=True)
         print(f"[Scanner] Full scan complete: {len(all_candidates)} candidates from {markets_scanned} markets across {events_scanned} events")
+        self.tier_inversions = self.detect_tier_inversions()
         return all_candidates
 
     def deep_scan(self):
@@ -428,6 +429,7 @@ class ScannerAgent:
         # Sort by urgency score descending — most actionable first
         candidates.sort(key=lambda c: c.get("urgency_score", 0), reverse=True)
         print(f"[Scanner] Deep scan complete: {len(candidates)} candidates from {markets_scanned} markets across {events_scanned} events")
+        self.tier_inversions = self.detect_tier_inversions()
         return candidates
 
     def incremental_scan(self):
