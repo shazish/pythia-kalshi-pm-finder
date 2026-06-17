@@ -739,7 +739,7 @@ class ScannerAgent:
     # ── Output ─────────────────────────────────────────────────────
 
     def _save_tier_inversions(self):
-        cache_dir = os.path.dirname(self.config["cache_file"])
+        cache_dir = os.path.dirname(self.config["candidates_file"])
         path = os.path.join(cache_dir, "tier_inversions.json")
         os.makedirs(cache_dir, exist_ok=True)
         with open(path, "w") as f:
