@@ -434,65 +434,77 @@ class ScannerAgent:
 
     def incremental_scan(self):
         """
-        Fetch recently updated markets (capped at incremental_max_pages pages).
+        Quick scan of events (capped at incremental_max_pages pages).
 
-        The Kalshi /markets endpoint with updated_since returns all open markets
-        ordered by update time descending, so the first pages contain the most
-        recently changed markets. We stop early to keep the scan fast.
+        Uses /events (same as full_scan) so markets are grouped by event with
+        proper category metadata. Only markets whose bid price changed since
+        the last scan (_price_changed) are reported as candidates — this is the
+        primary incremental mechanism. updated_since is passed to /events as a
+        best-effort hint (the endpoint silently ignores it but does not error).
         """
         last = self.cache.get("last_incremental_scan") or self.cache.get("last_full_scan")
-        print(f"[Scanner] Starting incremental scan (since {last})")
+        print(f"[Scanner] Starting incremental scan at {datetime.now(timezone.utc).isoformat()}")
+        if last:
+            print(f"[Scanner] Reporting price changes since last scan ({last})")
+        print(f"[Scanner] Target categories: {self.config['scan_categories']}")
 
         max_pages = self.config["incremental_max_pages"]
-        params = {"status": "open", "limit": 100}
-        if last:
-            params["updated_since"] = last
-
         scan_categories = self.config["scan_categories"]
         candidates = []
         cursor = None
         pages_fetched = 0
+        events_scanned = 0
+        markets_scanned = 0
 
         while pages_fetched < max_pages:
+            params = {"status": "open", "limit": 100, "with_nested_markets": "true"}
+            if last:
+                params["updated_since"] = last
             if cursor:
                 params["cursor"] = cursor
             try:
-                data = self.client._get("/markets", params)
+                data = self.client._get("/events", params)
             except Exception as e:
-                print(f"[Scanner] Incremental fetch error: {e}")
+                print(f"[Scanner] Incremental event fetch error: {e}")
                 break
 
-            markets = data.get("markets", [])
-            if not markets:
+            events = data.get("events", [])
+            if not events:
                 break
 
-            for m in [self.client.normalize_market(x) for x in markets]:
-                ticker = m.get("ticker", "")
-                # Cheap pre-check: skip known out-of-scope categories before any API call
-                cached_category = self.cache["markets"].get(ticker, {}).get("category", "")
-                if cached_category and cached_category not in scan_categories:
-                    self._update_cache(ticker, m, category=cached_category)
+            for event in events:
+                events_scanned += 1
+                cat = event.get("category", "")
+                if cat not in scan_categories:
                     continue
-                if self._price_changed(ticker, m) and self._passes_filters(m):
-                    side = self._high_confidence_side(m)
-                    candidate = self._enrich_candidate(m, side, "incremental_scan")
-                    category = candidate.get("category", "") or cached_category
-                    if category and category not in scan_categories:
-                        self._update_cache(ticker, m, category=category)
+
+                for m in event.get("markets", []):
+                    markets_scanned += 1
+                    ticker = m.get("ticker", "")
+
+                    title = (m.get("title", "") or "").lower()
+                    comma_legs = [s.strip() for s in title.split(",") if s.strip().startswith(("yes ", "no "))]
+                    if len(comma_legs) > 2:
                         continue
-                    candidates.append(candidate)
-                    self._update_cache(ticker, m, category=category)
-                else:
-                    self._update_cache(ticker, m, category=cached_category)
+
+                    normalized = self.client.normalize_market(m)
+                    if self._price_changed(ticker, normalized) and self._passes_filters(normalized):
+                        side = self._high_confidence_side(normalized)
+                        candidate = self._enrich_candidate(normalized, side, "incremental_scan", event=event)
+                        candidates.append(candidate)
+                    self._update_cache(ticker, normalized, category=cat)
 
             cursor = data.get("cursor")
             pages_fetched += 1
             if not cursor:
                 break
 
-        self.cache["last_incremental_scan"] = datetime.now(timezone.utc).isoformat()
+        if pages_fetched:
+            self.cache["last_incremental_scan"] = datetime.now(timezone.utc).isoformat()
         self._save_cache()
-        print(f"[Scanner] Incremental scan complete: {len(candidates)} candidates from {pages_fetched} pages")
+        candidates.sort(key=lambda c: c.get("urgency_score", 0), reverse=True)
+        print(f"[Scanner] Incremental scan complete: {len(candidates)} candidates from "
+              f"{markets_scanned} markets across {events_scanned} events ({pages_fetched} pages)")
         return candidates
 
     def _compute_days_to_close(self, close_date_str):
