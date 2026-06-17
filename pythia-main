@@ -120,6 +120,7 @@ _RUN_ARTIFACTS = [
     "claude_vs_me_comparison.md",
     "classification_review.txt",
     "verified_classified.json",
+    "tier_inversions.json",
 ]
 
 _RUN_ARTIFACT_GLOBS = [
@@ -421,8 +422,14 @@ def finalize():
 
     excel_basename = f"{run_dir}.xlsx"
     excel_path = os.path.join(LOGS_DIR, excel_basename)
+    tier_inv_path = str(_cache_dir / "tier_inversions.json")
+    tier_inversions = []
+    if os.path.exists(tier_inv_path):
+        with open(tier_inv_path) as _f:
+            tier_inversions = json.load(_f)
+
     try:
-        result_path = export_excel(to_notify, to_log, excel_path, mode_label=mode_label)
+        result_path = export_excel(to_notify, to_log, excel_path, mode_label=mode_label, tier_inversions=tier_inversions)
     except Exception as e:
         log.error("Excel export failed: %s", e)
         print(f"[pythia-main] ERROR: Excel export failed: {e}", file=sys.stderr)

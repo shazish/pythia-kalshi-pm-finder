@@ -296,6 +296,67 @@ def _write_sheet(ws, col_defs, rows, title):
     ws.auto_filter.ref = f"A2:{get_column_letter(len(col_defs))}2"
 
 
+_TIER_INV_COLS = [
+    # (header, width, extractor)
+    ("Series",           18, lambda r: r.get("series_prefix", "")),
+    ("Lower Ticker",     20, lambda r: r["lower_tier"]["ticker"]),
+    ("Lower T",           8, lambda r: r["lower_tier"]["threshold"]),
+    ("Lower Bid",         9, lambda r: r["lower_tier"]["yes_bid"]),
+    ("Lower Ask",         9, lambda r: r["lower_tier"]["yes_ask"]),
+    ("Lower Spread",      9, lambda r: r["lower_tier"]["spread"]),
+    ("Lower Vol",         9, lambda r: r["lower_tier"]["volume"]),
+    ("Higher Ticker",    20, lambda r: r["higher_tier"]["ticker"]),
+    ("Higher T",          8, lambda r: r["higher_tier"]["threshold"]),
+    ("Higher Bid",        9, lambda r: r["higher_tier"]["yes_bid"]),
+    ("Higher No Ask",     9, lambda r: r["higher_tier"]["no_ask"]),
+    ("Higher Spread",     9, lambda r: r["higher_tier"]["spread"]),
+    ("Higher Vol",        9, lambda r: r["higher_tier"]["volume"]),
+    ("Bid Gap (¢)",       9, lambda r: r.get("bid_gap", "")),
+    ("Total Cost (¢)",   11, lambda r: r.get("total_cost_cents", "")),
+    ("Min Net (¢)",      10, lambda r: r.get("min_net_profit_cents", "")),
+    ("Guaranteed?",      11, lambda r: "YES" if r.get("guaranteed_profit") else "no"),
+    ("Violation",        50, lambda r: r.get("violation", "")),
+    ("Trade",            50, lambda r: r.get("trade", "")),
+    ("Detected At",      20, lambda r: r.get("detected_at", "")),
+]
+
+
+def _write_tier_inversions_sheet(wb, inversions, timestamp):
+    ws = wb.create_sheet("Tier Inversions")
+    n_guaranteed = sum(1 for r in inversions if r.get("guaranteed_profit"))
+    title = f"Tier Inversions — {timestamp}  ({len(inversions)} total  |  {n_guaranteed} guaranteed arb)"
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(_TIER_INV_COLS))
+    title_cell = ws.cell(row=1, column=1, value=title)
+    _apply(title_cell, **_header_style())
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 22
+
+    for col_idx, (header, width, _) in enumerate(_TIER_INV_COLS, start=1):
+        cell = ws.cell(row=2, column=col_idx, value=header)
+        _apply(cell, **_header_style())
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+    ws.row_dimensions[2].height = 28
+    ws.freeze_panes = ws.cell(row=3, column=1)
+
+    for row_idx, inv in enumerate(inversions, start=3):
+        is_guaranteed = inv.get("guaranteed_profit", False)
+        row_fill = _fill("C6EFCE") if is_guaranteed else _fill("FFEB9C")  # green / yellow
+        for col_idx, (_, _, extractor) in enumerate(_TIER_INV_COLS, start=1):
+            try:
+                value = extractor(inv)
+            except Exception:
+                value = ""
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.fill = row_fill
+            cell.border = _thin_border()
+            cell.font = _font()
+            cell.alignment = Alignment(vertical="top", wrap_text=(col_idx >= 18))
+        ws.row_dimensions[row_idx].height = 30
+
+    ws.auto_filter.ref = f"A2:{get_column_letter(len(_TIER_INV_COLS))}2"
+
+
 def _write_legend(wb):
     """Add a Legend sheet explaining colour codes."""
     ws = wb.create_sheet("Legend")
@@ -361,7 +422,7 @@ def _extract_near_misses(to_log):
     return near_misses
 
 
-def export_excel(to_notify, to_log, output_path, mode_label=""):
+def export_excel(to_notify, to_log, output_path, mode_label="", tier_inversions=None):
     """
     Write a two-sheet Excel workbook.
 
@@ -418,7 +479,11 @@ def export_excel(to_notify, to_log, output_path, mode_label=""):
         f"All Classified Markets — {mode_label.capitalize()} — {timestamp}  ({len(all_rows)} total)",
     )
 
-    # Sheet 3: Legend
+    # Sheet 3: Tier Inversions (omitted when empty)
+    if tier_inversions:
+        _write_tier_inversions_sheet(wb, tier_inversions, timestamp)
+
+    # Sheet 4: Legend
     _write_legend(wb)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

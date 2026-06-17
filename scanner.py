@@ -363,6 +363,7 @@ class ScannerAgent:
         all_candidates.sort(key=lambda c: c.get("urgency_score", 0), reverse=True)
         print(f"[Scanner] Full scan complete: {len(all_candidates)} candidates from {markets_scanned} markets across {events_scanned} events")
         self.tier_inversions = self.detect_tier_inversions()
+        self._save_tier_inversions()
         return all_candidates
 
     def deep_scan(self):
@@ -430,6 +431,7 @@ class ScannerAgent:
         candidates.sort(key=lambda c: c.get("urgency_score", 0), reverse=True)
         print(f"[Scanner] Deep scan complete: {len(candidates)} candidates from {markets_scanned} markets across {events_scanned} events")
         self.tier_inversions = self.detect_tier_inversions()
+        self._save_tier_inversions()
         return candidates
 
     def incremental_scan(self):
@@ -735,6 +737,13 @@ class ScannerAgent:
         return inversions
 
     # ── Output ─────────────────────────────────────────────────────
+
+    def _save_tier_inversions(self):
+        cache_dir = os.path.dirname(self.config["cache_file"])
+        path = os.path.join(cache_dir, "tier_inversions.json")
+        os.makedirs(cache_dir, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(self.tier_inversions, f, indent=2)
 
     def save_candidates(self, candidates, path=None):
         path = path or self.config["candidates_file"]
