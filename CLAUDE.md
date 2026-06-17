@@ -36,6 +36,11 @@ The summary below is the source of truth for how each phase must work.
 - Skipping `scripts/classify_all.py` and orchestrating `Classifier.classify()` calls in-context
 - Pattern-matching or heuristic substitution for the per-ticker LLM call
 
+**In-context classification (no `--model` flag):**
+- When doing per-ticker in-context classification, spawn **at most 2 candidates per subagent**.
+- Each subagent's full context must be dedicated to just those 1-2 candidates.
+- Give each subagent the candidate's raw data, research findings, and instructions to classify individually without referring to any other candidate for comparison.
+
 ### Step 3 — Verify
 - Run `python3 scripts/verify_classifications.py`
 - Downgrades hallucinated or market-contradicted CERTAIN entries to LIKELY
