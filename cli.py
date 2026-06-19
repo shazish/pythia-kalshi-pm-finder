@@ -3,7 +3,7 @@
 Kalshi Tracker — Standalone CLI.
 
 Usage:
-    python3 cli.py scan [--mode deep|full|incremental|anomaly]
+    python3 cli.py scan [--mode k-deep|k-full|k-incremental|k-anomaly]
     python3 cli.py classify <candidates.json>
     python3 cli.py finalize
     python3 cli.py pm-scan [--mode pm-deep|pm-full|pm-incremental|pm-anomaly]
@@ -25,13 +25,13 @@ def cmd_scan(args):
         "scan_categories": ["Politics", "Economics", "Entertainment", "Weather", "World", "Elections"],
     }
     scanner = ScannerAgent(cfg)
-    if args.mode == "deep":
+    if args.mode == "k-deep":
         candidates = scanner.deep_scan()
-    elif args.mode == "full":
+    elif args.mode == "k-full":
         candidates = scanner.full_scan()
-    elif args.mode == "incremental":
+    elif args.mode == "k-incremental":
         candidates = scanner.incremental_scan()
-    elif args.mode == "anomaly":
+    elif args.mode == "k-anomaly":
         from anomaly_scanner import AnomalyScanner
         ascanner = AnomalyScanner({"candidates_file": os.path.join(SKILL_DIR, "cache", "anomaly_candidates.json")})
         candidates = ascanner.scan()
@@ -137,7 +137,7 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     p_scan = sub.add_parser("scan", help="Run a Kalshi scan")
-    p_scan.add_argument("--mode", default="deep", choices=["deep", "full", "incremental", "anomaly"])
+    p_scan.add_argument("--mode", default="k-deep", choices=["k-deep", "k-full", "k-incremental", "k-anomaly"])
 
     p_pm = sub.add_parser("pm-scan", help="Run a Polymarket scan")
     p_pm.add_argument("--mode", default="pm-deep", choices=["pm-deep", "pm-full", "pm-incremental", "pm-anomaly"])
