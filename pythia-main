@@ -8,7 +8,7 @@ USAGE:
     ./pythia-main backtest
 
 MODES:
-    incremental | full | deep | anomaly
+    k-incremental | k-full | k-deep | k-anomaly
     pm-incremental | pm-full | pm-deep | pm-anomaly
 
 WHAT THIS SCRIPT DOES:
@@ -92,7 +92,7 @@ PM_SCANNER_CONFIG = {
 }
 
 _CANDIDATES_MAP = {
-    "anomaly":        "anomaly_candidates.json",
+    "k-anomaly":      "anomaly_candidates.json",
     "pm-incremental": "pm_candidates.json",
     "pm-full":        "pm_candidates.json",
     "pm-deep":        "pm_candidates.json",
@@ -100,7 +100,7 @@ _CANDIDATES_MAP = {
 }
 
 VALID_MODES = [
-    "incremental", "full", "deep", "anomaly",
+    "k-incremental", "k-full", "k-deep", "k-anomaly",
     "pm-incremental", "pm-full", "pm-deep", "pm-anomaly",
 ]
 
@@ -242,9 +242,9 @@ def run_price_scan(mode):
     from scanner import ScannerAgent
     scanner = ScannerAgent(SCANNER_CONFIG)
     scan_fn = {
-        "incremental": scanner.incremental_scan,
-        "full":        scanner.full_scan,
-        "deep":        scanner.deep_scan,
+        "k-incremental": scanner.incremental_scan,
+        "k-full":        scanner.full_scan,
+        "k-deep":        scanner.deep_scan,
     }[mode]
     candidates = scan_fn()
     if candidates:
@@ -334,11 +334,11 @@ def finalize():
     log.info("finalize() started — %d entries loaded from classified.json", len(classified))
 
     _SCAN_TYPE_MAP = {
-        "deep_scan":           "deep",
-        "deep_spread_scan":    "deep",
-        "full_scan":           "full",
-        "incremental_scan":    "incremental",
-        "anomaly_scan":        "anomaly",
+        "deep_scan":           "k-deep",
+        "deep_spread_scan":    "k-deep",
+        "full_scan":           "k-full",
+        "incremental_scan":    "k-incremental",
+        "anomaly_scan":        "k-anomaly",
         "pm_deep_scan":        "pm-deep",
         "pm_full_scan":        "pm-full",
         "pm_incremental_scan": "pm-incremental",
@@ -847,7 +847,7 @@ def _print_banner() -> None:
         · · · · · · · · · · · · ·
         
 Parameters:
-◌ <mode> (positional, required): incremental | full | deep | anomaly | pm-incremental | pm-full | pm-deep | pm-anomaly
+◌ <mode> (positional, required): k-incremental | k-full | k-deep | k-anomaly | pm-incremental | pm-full | pm-deep | pm-anomaly
 ◌ --model MODEL (optional): override the classification model (e.g. openrouter/owl-alpha; defaults to in-context Hermes)
 """)
 
@@ -916,7 +916,7 @@ def main() -> None:
 
     print(f"[pythia-main] Running {mode} scan...")
     try:
-        if mode == "anomaly":
+        if mode == "k-anomaly":
             candidates = run_anomaly_scan()
         elif mode.startswith("pm-"):
             candidates = run_pm_scan(mode)
