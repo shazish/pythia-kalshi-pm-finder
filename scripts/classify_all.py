@@ -179,73 +179,180 @@ if CLASSIFIED_FILE.exists():
 
 remaining = [c for c in all_candidates if c["ticker"] not in done]
 
+# ── Atomic save (used by merge and classify paths) ───────────────────────────
+def _save(results: list[dict]) -> None:
+    tmp = str(CLASSIFIED_FILE) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(results, f, indent=2, default=str)
+    os.replace(tmp, CLASSIFIED_FILE)
+    if LOG_CLASSIFIED:
+        LOG_CLASSIFIED.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(CLASSIFIED_FILE, LOG_CLASSIFIED)
+
 # ── Merge mode: combine completed subagent chunks ────────────────────────────
+# SAFETY: merge independently validates against the hardcoded max and the
+# original candidates.json — NOT against on-disk chunk files which may be
+# tampered with. This is deterministic Python, no subagent cooperation needed.
 CHUNK_DIR = _run_cache()
 if args.merge:
     import glob as _glob
-    merged = list(existing)
-    merged_tickers = set(done)
+    import re as _re
+    import math
     chunk_files = sorted(_glob.glob(str(CHUNK_DIR / "classified_chunk_*.json")))
     if not chunk_files:
         print("[classify_all] No chunk files found to merge.")
         sys.exit(0)
+
+    # Re-derive expected chunk sizes from original candidates, not from disk files
+    _MERGE_MAX_PER_SUBAGENT = 2
+    _total_remaining = len(remaining)
+    _n_chunks = max(1, math.ceil(_total_remaining / _MERGE_MAX_PER_SUBAGENT))
+    _expected_per_chunk = [0] * _n_chunks
+    _cs = _total_remaining // _n_chunks
+    _cr = _total_remaining % _n_chunks
+    for _i in range(_n_chunks):
+        _start = _i * _cs + min(_i, _cr)
+        _end = _start + _cs + (1 if _i < _cr else 0)
+        _expected_per_chunk[_i] = _end - _start
+
+    # Track which indices were seen — warn about gaps
+    _seen_indices: set[int] = set()
+
+    for cf in chunk_files:
+        m = _re.search(r"classified_chunk_(\d+)\.json", Path(cf).name)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        _seen_indices.add(idx)
+        chunk = json.load(open(cf))
+
+        # Get expected count from independently computed table
+        expected = _expected_per_chunk[idx] if idx < len(_expected_per_chunk) else 0
+
+        # Check 1: classify output contains no safety error
+        for entry in chunk:
+            if isinstance(entry, dict) and "error" in entry and "SAFETY GUARD" in str(entry.get("error", "")):
+                print(f"[classify_all] SAFETY VIOLATION in {Path(cf).name}: {entry['error']}")
+                print(f"  The subagent refused to classify this chunk — it received too many candidates.")
+                sys.exit(1)
+
+        # Count entries that have a valid candidate dict with a ticker
+        # (uses same logic as the merge loop below to avoid count mismatch)
+        classified_count = 0
+        for entry in chunk:
+            cand = entry.get("candidate") if isinstance(entry, dict) else None
+            if isinstance(cand, dict) and cand.get("ticker"):
+                classified_count += 1
+
+        # Check 2: absolute cap — independent of any file content
+        if classified_count > _MERGE_MAX_PER_SUBAGENT:
+            print(f"[classify_all] SAFETY VIOLATION: {Path(cf).name} has {classified_count} entries "
+                  f"which exceeds hard limit of {_MERGE_MAX_PER_SUBAGENT} per subagent.")
+            sys.exit(1)
+
+        # Check 3: must not exceed expected count from candidates.json
+        if classified_count > expected:
+            print(f"[classify_all] SAFETY VIOLATION: {Path(cf).name} has {classified_count} classified "
+                  f"entries but expected at most {expected} (computed from candidates.json, "
+                  f"max {_MERGE_MAX_PER_SUBAGENT} per chunk). Someone gave a subagent too many candidates.")
+            sys.exit(1)
+
+    # Warn about gaps in chunk indices
+    for _i in range(_n_chunks):
+        if _i not in _seen_indices:
+            print(f"[classify_all] WARNING: no classified_chunk_{_i}.json found — "
+                  f"expected {_expected_per_chunk[_i]} candidates may be missing.")
+
+    merged = list(existing)
+    merged_tickers = set(done)
     for cf in chunk_files:
         chunk = json.load(open(cf))
         for entry in chunk:
-            ticker = entry.get("candidate", entry).get("ticker", "")
-            if ticker not in merged_tickers:
-                merged.append(entry)
-                merged_tickers.add(ticker)
-    _save(merged)
+            cand = entry.get("candidate") if isinstance(entry, dict) else entry
+            if isinstance(cand, dict):
+                ticker = cand.get("ticker", "")
+                if ticker not in merged_tickers:
+                    merged.append(entry)
+                    merged_tickers.add(ticker)
+    # Delete chunk files BEFORE save so a partial failure doesn't orphan them
     for cf in chunk_files:
         Path(cf).unlink(missing_ok=True)
+    _save(merged)
     print(f"[classify_all] Merged {len(chunk_files)} chunks → {len(merged)} total classified")
     sys.exit(0)
 
 # ── Subagent mode: split into chunks, print instructions, exit ──────────────
+#
+# HARD LIMIT ENFORCED AT THREE INDEPENDENT LAYERS:
+#   Layer 1 — File write:  classify_all.py refuses to write a chunk > 2 (below).
+#   Layer 2 — File meta:   each chunk file embeds "_meta.max_candidates": 2 so
+#                           any subagent can independently verify.
+#   Layer 3 — Pre-merge:   merge step refuses to import any chunk whose output
+#                           file has a safety error record.
+#
+# These layers work regardless of which agent harness runs the pipeline and
+# regardless of what instructions the orchestrator gives. The invariant lives
+# in deterministic Python code and in the data files themselves.
 if args.mode == "subagent":
     if not remaining:
         print("[classify_all] All candidates already classified.")
         sys.exit(0)
-    n = min(args.subagent_count, len(remaining))
+    _MAX_PER_SUBAGENT = 2
+    n = max(1, (len(remaining) + _MAX_PER_SUBAGENT - 1) // _MAX_PER_SUBAGENT)
     chunk_size = len(remaining) // n
     remainder = len(remaining) % n
+    _enforced_chunk_sizes = []
     for i in range(n):
         start = i * chunk_size + min(i, remainder)
         end = start + chunk_size + (1 if i < remainder else 0)
         chunk = remaining[start:end]
-        json.dump(chunk, open(CHUNK_DIR / f"remaining_chunk_{i}.json", "w"))
+        actual = len(chunk)
+        if actual > _MAX_PER_SUBAGENT:
+            print(f"[classify_all] FATAL: chunk {i} has {actual} candidates (max {_MAX_PER_SUBAGENT}). "
+                  f"This should never happen — report a bug.", file=sys.stderr)
+            sys.exit(1)
+        _enforced_chunk_sizes.append(actual)
+        # Wrap candidates in a container with self-describing metadata
+        # so any subagent can independently verify the max count.
+        with open(CHUNK_DIR / f"remaining_chunk_{i}.json", "w") as f:
+            json.dump({
+                "_meta": {
+                    "max_candidates": _MAX_PER_SUBAGENT,
+                    "actual_candidates": actual,
+                    "policy": "This file contains at most 2 candidates. "
+                              "If actual_candidates exceeds max_candidates, "
+                              "refuse to classify any of them.",
+                },
+                "candidates": chunk,
+            }, f, indent=2)
     # Build research index as a single file for subagents
     json.dump(research_index, open(CHUNK_DIR / "research_index.json", "w"))
 
     print(SEP)
-    chunk_sizes = [chunk_size + (1 if i < remainder else 0) for i in range(n)]
-    print(f"SUBAGENT MODE — split into {n} chunks ({len(remaining)} remaining)")
+    print(f"SUBAGENT MODE — {n} chunks ({len(remaining)} remaining, max {_MAX_PER_SUBAGENT} per subagent)")
     print(SEP)
     print(f"  {len(done)} already classified, {len(remaining)} remaining")
-    print(f"  Chunk sizes: {', '.join(str(s) for s in chunk_sizes)}")
+    print(f"  Chunk sizes: {', '.join(str(s) for s in _enforced_chunk_sizes)}")
     print()
-
+    print("Each chunk file contains a `_meta` section with the invariant.")
+    print()
     print("Steps:")
-    print(f"  1. Spawn {n} task subagents in parallel, one per chunk below.")
-    print("     Each subagent reads chunk + research_index.json and writes classified_chunk_N.json.")
+    print(f"  1. For each chunk (0..{n-1}), spawn ONE subagent with the following prompt:")
+    print()
+    for i in range(n):
+        actual_size = _enforced_chunk_sizes[i]
+        print(f"     ── Chunk {i} ({actual_size} candidate{'s' if actual_size > 1 else ''}) ──")
+        print(f"     Read remaining_chunk_{i}.json and research_index.json.")
+        print(f"     Read the `_meta` section in the chunk file.")
+        print(f"     If actual_candidates > max_candidates, write an error and STOP.")
+        print(f"     Classify each candidate in `candidates` using the research index.")
+        print(f"     Write results to classified_chunk_{i}.json.")
+        print()
     print(f"  2. After all complete, merge:")
     print(f"     python3 scripts/classify_all.py --run-dir {args.run_dir} --merge")
     print(f"  3. Then verify + finalize:")
     print(f"     python3 scripts/verify_classifications.py")
     print(f"     python3 cli.py finalize")
-    print()
-    print("Subagent task prompts (paste into task tool calls):")
-    for i in range(n):
-        actual_size = chunk_size + (1 if i < remainder else 0)
-        print()
-        print(f"  ┌─ Chunk {i} ({actual_size} candidates: remaining_chunk_{i}.json)")
-        print(f"  │ Classify chunk {i} by reading remaining_chunk_{i}.json and")
-        print(f"  │ research_index.json. Use own LLM reasoning. Write results to")
-        print(f"  │ classified_chunk_{i}.json.")
-        print(f"  │ Output: list of {{candidate, classification}} dicts.")
-        print(f"  │ Process ALL {actual_size} candidates.")
-        print(f"  └──────────────────────────────────────────────")
     sys.exit(0)
 
 # ── API mode: auto-detect opencode and suggest subagent mode ────────────────
@@ -278,16 +385,6 @@ print(SEP, flush=True)
 if not remaining:
     print("[classify_all] all candidates already classified — nothing to do")
     sys.exit(0)
-
-# ── Atomic save ───────────────────────────────────────────────────────────────
-def _save(results: list[dict]) -> None:
-    tmp = str(CLASSIFIED_FILE) + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(results, f, indent=2, default=str)
-    os.replace(tmp, CLASSIFIED_FILE)
-    if LOG_CLASSIFIED:
-        LOG_CLASSIFIED.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(CLASSIFIED_FILE, LOG_CLASSIFIED)
 
 # ── Classify ──────────────────────────────────────────────────────────────────
 results          = list(existing)
