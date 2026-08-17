@@ -667,7 +667,7 @@ class Classifier:
         result = clf.classify(candidate, research=research_entry)
     """
 
-    _FALLBACK_MODEL = "openrouter/owl-alpha"
+    _FALLBACK_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
     _MODEL_ENV_VARS = ("CLASSIFIER_MODEL", "HERMES_MODEL", "MODEL")
     MAX_TOKENS = 2048
     MAX_RETRIES = 2

@@ -70,6 +70,7 @@ class ScannerAgent:
             "open_interest": market_data.get("open_interest", 0),
             "status": market_data.get("status", ""),
             "close_date": market_data.get("close_date", ""),
+            "created_time": market_data.get("created_time", ""),
             "category": category or existing.get("category", ""),
             "last_seen": datetime.now(timezone.utc).isoformat(),
         }
@@ -594,6 +595,7 @@ class ScannerAgent:
             "status": market.get("status"),
             "close_date": close_date,
             "days_to_close": days_to_close,
+            "created_time": market.get("created_time", ""),
             "platform": "Kalshi",
             "settlement_currency": "USD",
             "rules_primary": market.get("rules_primary", "") or event.get("rules_primary", ""),

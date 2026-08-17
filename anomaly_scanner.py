@@ -249,6 +249,7 @@ class AnomalyScanner:
             "status": market.get("status"),
             "close_date": close_date,
             "days_to_close": days_to_close,
+            "created_time": market.get("created_time", ""),
             "urgency_score": urgency_score,
             "platform": "Kalshi",
             "settlement_currency": "USD",

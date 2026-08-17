@@ -219,6 +219,7 @@ class PolymarketScanner:
             "status":               market.get("status"),
             "close_date":           close_date,
             "days_to_close":        days_to_close,
+            "created_time":         market.get("created_time", ""),
             "settlement_source_url": market.get("settlement_source_url", ""),
             "rules_primary":        market.get("rules_primary", ""),
             "platform":             "Polymarket",

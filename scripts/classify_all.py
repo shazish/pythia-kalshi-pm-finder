@@ -6,7 +6,7 @@ Usage:
     python3 scripts/classify_all.py [--run-dir RUN_DIR] [--model MODEL]
 
     --run-dir  log subdir under logs/; defaults to logs/.current_run
-    --model    override model (e.g. openrouter/owl-alpha)
+    --model    override model (e.g. nvidia/nemotron-3-ultra-550b-a55b:free)
 
 Reads:
     cache/candidates.json         full candidate data (rules, prices, etc.)
@@ -79,7 +79,7 @@ def make_classified_entry(candidate: dict, classification: dict) -> dict:
 # ── Args ──────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
 parser.add_argument("--run-dir", default=None)
-parser.add_argument("--model", default=None, help="Override model (e.g. openrouter/owl-alpha)")
+parser.add_argument("--model", default=None, help="Override model (e.g. nvidia/nemotron-3-ultra-550b-a55b:free)")
 parser.add_argument("--mode", default="auto", choices=["auto", "api", "subagent"],
                     help="Classification mode: auto=detect, api=external API, subagent=opencode subagents")
 parser.add_argument("--merge", action="store_true",
