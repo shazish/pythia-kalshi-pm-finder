@@ -822,7 +822,8 @@ class Classifier:
 
     @staticmethod
     def _is_openrouter(model: str) -> bool:
-        return model.startswith("openrouter/")
+        # Everything except Anthropic models routes through OpenRouter
+        return not model.startswith(("anthropic/", "claude-"))
 
     @classmethod
     def _load_api_key(cls, model: str) -> str:

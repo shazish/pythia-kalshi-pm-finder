@@ -143,7 +143,7 @@ def _log_error(run_log, step: str, msg: str) -> None:
 
 # ── Load candidates (full data) ───────────────────────────────────────────────
 all_candidates: list[dict] = []
-for fname in ("candidates.json", "anomaly_candidates.json"):
+for fname in ("candidates.json", "anomaly_candidates.json", "pm_candidates.json"):
     p = _run_cache() / fname
     if p.exists():
         with open(p) as f:

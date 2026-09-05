@@ -834,7 +834,12 @@ Pipeline complete when finalize exits 0.
 # ── Banner ────────────────────────────────────────────────────────────────────
 
 def _print_banner() -> None:
-    print(""".
+    banner_file = REPO / "assets" / "banner.txt"
+    if banner_file.exists():
+        print()
+        print(banner_file.read_text())
+    else:
+        print(""".
 
   @@@@@   @@  @@  @@@@@@  @@  @@  @@@@@@    @@
   @@  @@  @@  @@    @@    @@  @@    @@     @@@@
@@ -845,7 +850,8 @@ def _print_banner() -> None:
 
   Prediction Intelligence for Kalshi & Polymarket
         · · · · · · · · · · · · ·
-        
+        """)
+    print("""
 Parameters:
 ◌ <mode> (positional, required): k-incremental | k-full | k-deep | k-anomaly | pm-incremental | pm-full | pm-deep | pm-anomaly
 ◌ --model MODEL (optional): override the classification model (e.g. openrouter/owl-alpha; defaults to in-context Hermes)
