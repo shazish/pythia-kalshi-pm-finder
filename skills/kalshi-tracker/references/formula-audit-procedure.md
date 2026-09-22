@@ -18,14 +18,14 @@ Read every file that contains arithmetic, comparisons, or model parameters:
 
 | File | What to check |
 |------|---------------|
-| `opportunity_manager.py` | Edge formulas, Kelly sizing, annualized edge, fee rates |
-| `scanner.py` | Urgency score, price change, volume anomaly, combo detection |
-| `polymarket_scanner.py` | Same as scanner, spread checks, anomaly scan |
-| `classifier.py` | Validation rules, metric extraction, prompt builders |
-| `backtest_agent.py` | Precision calculation, evaluation logic |
-| `excel_reporter.py` | Column formulas, URL generation |
+| `step_5_finalize/opportunity_manager.py` | Edge formulas, Kelly sizing, annualized edge, fee rates |
+| `step_1_scan/scanner.py` | Urgency score, price change, volume anomaly, combo detection |
+| `step_1_scan/polymarket_scanner.py` | Same as scanner, spread checks, anomaly scan |
+| `step_3_classification/classifier.py` | Validation rules, metric extraction, prompt builders |
+| `backtesting/backtest_agent.py` | Precision calculation, evaluation logic |
+| `step_5_finalize/excel_reporter.py` | Column formulas, URL generation |
 | `config.yaml` | Threshold values, fee rates, bankroll defaults |
-| `kalshi_client.py` | Price normalization (dollars ↔ cents conversion) |
+| `shared/kalshi_client.py` | Price normalization (dollars ↔ cents conversion) |
 
 ### Step 2: Extract Every Formula
 
@@ -60,7 +60,7 @@ Run the same numbers through the code and compare. A mismatch means either your 
 Pipe the calculation files into Claude Code (`-p` print mode) and ask it to independently verify:
 
 ```bash
-cat opportunity_manager.py | claude -p \
+cat step_5_finalize/opportunity_manager.py | claude -p \
   "Verify the edge and Kelly formulas for both platforms. \
    Show the exact math. Report any bugs. \
    Allow max 3 turns."

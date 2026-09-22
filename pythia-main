@@ -241,7 +241,7 @@ def _print_progress(phase_name, index, total):
 # ── Scan runners ──────────────────────────────────────────────────────────────
 
 def run_price_scan(mode):
-    from scanner import ScannerAgent
+    from step_1_scan.scanner import ScannerAgent
     scanner = ScannerAgent(SCANNER_CONFIG)
     scan_fn = {
         "k-incremental": scanner.incremental_scan,
@@ -255,7 +255,7 @@ def run_price_scan(mode):
 
 
 def run_anomaly_scan():
-    from anomaly_scanner import AnomalyScanner
+    from step_1_scan.anomaly_scanner import AnomalyScanner
     scanner = AnomalyScanner(ANOMALY_CONFIG)
     candidates = scanner.scan()
     if candidates:
@@ -264,7 +264,7 @@ def run_anomaly_scan():
 
 
 def run_pm_scan(mode):
-    from polymarket_scanner import PolymarketScanner
+    from step_1_scan.polymarket_scanner import PolymarketScanner
     scanner = PolymarketScanner(PM_SCANNER_CONFIG)
     scan_fn = {
         "pm-incremental": scanner.incremental_scan,
@@ -314,8 +314,8 @@ def _archive_run(excel_path, run_path, run_dir, cache_dir: Path = None):
 # ── Finalize ──────────────────────────────────────────────────────────────────
 
 def finalize():
-    from pipeline_logger import get_logger
-    from classifier import validate_classification
+    from shared.pipeline_logger import get_logger
+    from step_3_classification.classifier import validate_classification
     log = get_logger("pythia-main")
 
     # Snapshot cache dir now — _init_run() (called below as fallback) may change KALSHI_CACHE_DIR
@@ -385,8 +385,8 @@ def finalize():
                 candidate=candidate_obj,
             )
 
-    from opportunity_manager import OpportunityManager
-    from excel_reporter import export_excel
+    from step_5_finalize.opportunity_manager import OpportunityManager
+    from step_5_finalize.excel_reporter import export_excel
 
     try:
         mgr = OpportunityManager()
@@ -395,7 +395,7 @@ def finalize():
         log.error("OpportunityManager failed: %s", e)
         print(f"[pythia-main] ERROR: opportunity manager failed: {e}", file=sys.stderr)
         try:
-            from pipeline_run_log import RunLog
+            from shared.pipeline_run_log import RunLog
             rl = RunLog.for_current_run()
             if rl:
                 rl.step_error("Step 5 — Finalize (OpportunityManager)", str(e))
@@ -436,7 +436,7 @@ def finalize():
         log.error("Excel export failed: %s", e)
         print(f"[pythia-main] ERROR: Excel export failed: {e}", file=sys.stderr)
         try:
-            from pipeline_run_log import RunLog
+            from shared.pipeline_run_log import RunLog
             rl = RunLog.for_current_run()
             if rl:
                 rl.step_error("Step 5 — Finalize (Excel export)", str(e))
@@ -447,7 +447,7 @@ def finalize():
     _archive_run(result_path, run_path, run_dir, cache_dir=_cache_dir)
 
     try:
-        from pipeline_run_log import RunLog
+        from shared.pipeline_run_log import RunLog
         run_log = RunLog.for_current_run()
         if run_log:
             routing_summary = {
@@ -521,8 +521,8 @@ Do NOT skip steps. Do NOT hardcode results.
 TEMP SCRIPTS: ALL scripts you create during this pipeline run — including subagent
 scripts, batch runners, helper scripts, or any other .py file you write
 yourself — MUST go in tmp/ (e.g. tmp/my_script.py), NOT in the repo root or
-scripts/. This applies even if the script runs the pipeline or orchestrates a batch.
-The tmp/ folder is gitignored. scripts/ contains permanent pipeline code only — do
+the step folders. This applies even if the script runs the pipeline or orchestrates a batch.
+The tmp/ folder is gitignored. The step folders contain permanent pipeline code only — do
 not create new files there.
 """)
 
@@ -577,13 +577,13 @@ NOTE: Batch files are written directly to logs/{run_dir}/ — no separate copy n
 After EACH batch completes, run these three commands IN ORDER:
 
   1. Health check — detect search failures vs genuine empty results:
-       python3 scripts/check_research.py logs/{run_dir}/research_batch<N>.json
+       python3 step_2_research/check_research.py logs/{run_dir}/research_batch<N>.json
      This writes search_status: ok|empty|search_failed to each entry and
      appends failed entries to logs/{run_dir}/research_retry.json.
 
   2. Filter — prune low-quality findings:
        from pathlib import Path
-       from research_utils import filter_research_batch
+       from step_2_research.research_utils import filter_research_batch
        import json
        batch_path = Path('logs/{run_dir}/research_batch<N>.json')
        data = json.loads(batch_path.read_text())
@@ -593,7 +593,7 @@ After EACH batch completes, run these three commands IN ORDER:
 
   3. Run log — append batch result:
        python3 -c "
-       from pipeline_run_log import RunLog
+       from shared.pipeline_run_log import RunLog
        log = RunLog.for_current_run()
        if log:
            log.step_research_batch(
@@ -606,7 +606,7 @@ After EACH batch completes, run these three commands IN ORDER:
        "
 
 After ALL batches finish, run:
-  python3 -c "from pipeline_run_log import RunLog; log = RunLog.for_current_run(); log and log.step_research_complete()"
+  python3 -c "from shared.pipeline_run_log import RunLog; log = RunLog.for_current_run(); log and log.step_research_complete()"
 
 {sep}
 STEP 2.5 — RETRY FAILED SEARCHES  (skip if logs/{run_dir}/research_retry.json absent or empty)
@@ -666,7 +666,7 @@ Each chunk subagent must follow this protocol EXACTLY:
 
   Update the original batch file (logs/{run_dir}/research_batch<N>.json) in-place.
   Run health check on each updated batch:
-    python3 scripts/check_research.py logs/{run_dir}/research_batch<N>.json
+    python3 step_2_research/check_research.py logs/{run_dir}/research_batch<N>.json
 
 After ALL chunks complete (or are skipped), clean up:
   python3 -c "
@@ -690,11 +690,11 @@ STEP 3 — CLASSIFICATION  (one call per ticker — no shortcuts)
         model_flag = f" --model {model_override}" if model_override else ""
         print(f"""
 Anomaly candidates are scored quantitatively — no per-ticker LLM research needed.
-The scorer (anomaly_scorer.py) computes a signal score from market data, then a
+The scorer (step_3_classification/anomaly_scorer.py) computes a signal score from market data, then a
 veto LLM runs a lightweight check for public explanations that would discount the signal.
 
 Run:
-  python3 scripts/classify_all.py --run-dir {run_dir}{model_flag}
+  python3 step_3_classification/classify_all.py --run-dir {run_dir}{model_flag}
 
 This routes each anomaly candidate through Classifier._classify_anomaly():
   1. Score via anomaly_scorer.score_anomaly() → STRONG / WATCH / SKIP
@@ -715,7 +715,7 @@ If no key is available, WATCH/STRONG candidates will fail the veto step — set 
 After ALL research batches and retries are complete:
 
   Run the standalone classification script (handles checkpointing and retries):
-    python3 scripts/classify_all.py --run-dir {run_dir} --model {model_override}
+    python3 step_3_classification/classify_all.py --run-dir {run_dir} --model {model_override}
 
   This calls Classifier(model="{model_override}") once per ticker, saves after each
   candidate, and resumes from where it left off if interrupted. Runtime ~60-90 min
@@ -745,14 +745,14 @@ After ALL research batches and retries are complete:
             - Skip the classification call for this ticker.
        b. Otherwise:
             YOU (Hermes) classify this ticker directly using your current model:
-              i.  Get system prompt:  classifier.py:{classifier_prompt_fn}
-              ii. Get user prompt:    classifier.py:build_regular_prompt(candidate)
+              i.  Get system prompt:  step_3_classification/classifier.py:{classifier_prompt_fn}
+              ii. Get user prompt:    step_3_classification/classifier.py:build_regular_prompt(candidate)
               iii.Append to user prompt: the research summary and findings from step 1
                   (replace the "Instructions: 1. Perform web searches" block with
                    the pre-conducted research findings — same as _inject_research() does)
               iv. Reason about this specific ticker and output the JSON schema.
               v.  Run:  python3 -c "
-                    from classifier import validate_classification
+                    from step_3_classification.classifier import validate_classification
                     import json
                     result = <your JSON output as a dict>
                     validated = validate_classification(result, rules=candidate.get('rules_primary',''))
@@ -766,7 +766,7 @@ After ALL research batches and retries are complete:
 
   Then write the classification summary to the run log:
     python3 -c "
-    from pipeline_run_log import RunLog
+    from shared.pipeline_run_log import RunLog
     import json
     results = json.loads(open('logs/{run_dir}/classified.json').read())
     counts = {{'CERTAIN': 0, 'LIKELY': 0, 'UNCLEAR': 0}}
@@ -800,7 +800,7 @@ STEP 3.5 — ADVERSARIAL CHALLENGE  (CERTAIN entries only)
 
 Run after classification is saved, before verify:
 
-  python3 scripts/challenge_certain.py{"" if not model_override else f" --model {model_override}"}
+  python3 step_4_verify/challenge_certain.py{"" if not model_override else f" --model {model_override}"}
 
 Runs a second adversarial LLM pass on each CERTAIN entry — searches for the
 strongest real-world argument AGAINST the classified outcome. Downgrades to
@@ -814,7 +814,7 @@ STEP 4 — VERIFY
 
 Run after step 3.5:
 
-  python3 scripts/verify_classifications.py{"" if not model_override else f" --model {model_override}"}
+  python3 step_4_verify/verify_classifications.py{"" if not model_override else f" --model {model_override}"}
 
 Captures cited sources and automatically reviews article/claim/settlement evidence.
 Uses the configured model and caches reviews; see docs/verification.md.
@@ -875,7 +875,7 @@ def main() -> None:
         return
 
     if args and args[0] == "backtest":
-        from backtest import run as backtest_run
+        from backtesting.backtest import run as backtest_run
         backtest_run()
         return
 
@@ -940,7 +940,7 @@ def main() -> None:
         msg = f"Scan failed ({mode}): {e}\n{traceback.format_exc()}"
         print(f"[pythia-main] ERROR: {msg}", file=sys.stderr)
         try:
-            from pipeline_run_log import RunLog
+            from shared.pipeline_run_log import RunLog
             log = RunLog.for_current_run()
             if log:
                 log.step_error(f"Step 1 — Scan ({mode})", msg)
@@ -966,7 +966,7 @@ def main() -> None:
 
     # Write run log header + step 1
     try:
-        from pipeline_run_log import RunLog
+        from shared.pipeline_run_log import RunLog
         run_log = RunLog.for_current_run()
         if run_log:
             run_log.write_header(mode, run_dir)

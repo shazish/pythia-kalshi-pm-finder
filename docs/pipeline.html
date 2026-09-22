@@ -247,8 +247,8 @@
 
 <nav>
   <a href="pipeline.html" class="active">Pipeline Overview</a>
-  <a href="classifier.html">Classifier Detail</a>
-  <a href="backtest.html">Backtest</a>
+  <a href="step_3_classification.classifier.html">Classifier Detail</a>
+  <a href="backtesting.backtest.html">Backtest</a>
 </nav>
 
 <h1>Prediction Market Trading Pipeline</h1>
@@ -319,7 +319,7 @@
       <div class="cards">
 
         <div class="card kalshi" style="flex:1; min-width:300px">
-          <div class="card-title">ScannerAgent <span class="badge badge-kalshi">scanner.py</span></div>
+          <div class="card-title">ScannerAgent <span class="badge badge-kalshi">step_1_scan/scanner.py</span></div>
           <div class="filter-chain">
             <span class="filter">GET /events?with_nested_markets</span>
             <span class="filter-arrow">→</span>
@@ -340,7 +340,7 @@
         </div>
 
         <div class="card kalshi" style="flex:1; min-width:260px">
-          <div class="card-title">AnomalyScanner <span class="badge badge-kalshi">anomaly_scanner.py</span></div>
+          <div class="card-title">AnomalyScanner <span class="badge badge-kalshi">step_1_scan/anomaly_scanner.py</span></div>
           <div class="filter-chain">
             <span class="filter">GET /events?with_nested_markets</span>
             <span class="filter-arrow">→</span>
@@ -355,7 +355,7 @@
         </div>
 
         <div class="card polymarket" style="flex:1; min-width:300px">
-          <div class="card-title">PolymarketScanner <span class="badge badge-poly">polymarket_scanner.py</span></div>
+          <div class="card-title">PolymarketScanner <span class="badge badge-poly">step_1_scan/polymarket_scanner.py</span></div>
           <div class="filter-chain">
             <span class="filter">Gamma API /events (offset paged)</span>
             <span class="filter-arrow">→</span>
@@ -428,7 +428,7 @@
         <div class="card teal" style="flex:2; min-width:360px">
           <div class="card-title">
             Market Clusterer
-            <span class="badge badge-teal">market_clusterer.py</span>
+            <span class="badge badge-teal">step_1_scan/market_clusterer.py</span>
             <span class="badge badge-new">new</span>
           </div>
           <div class="detail" style="margin-top:4px">
@@ -471,7 +471,7 @@
         <div class="card shared" style="flex:2; min-width:340px">
           <div class="card-title">
             Hermes Agent — LLM + Web Search
-            <span class="badge badge-llm">classifier.py</span>
+            <span class="badge badge-llm">step_3_classification/classifier.py</span>
           </div>
           <div class="detail" style="margin-top:4px">
             <li><strong>Regular prompt</strong> (price-first): "Is this outcome near-certain?"</li>
@@ -482,7 +482,7 @@
             <li>Search C — <span class="tip" data-tip="How the platform determines the final outcome and pays out winners. Settlement risk is when the platform might resolve the market differently than the real-world result.">settlement</span> criteria and resolution rules</li>
             <li><span class="tip" data-tip="Flags unusually large trading on the opposite side. The warning is injected into the classifier prompt so the LLM is forced to address it before classifying.">Volume anomaly</span> warning injected when opposite-side implied $ ≥ $5k</li>
             <li>CLUSTER CONTEXT block shown when candidate has siblings — sibling inconsistency is a contradicting signal</li>
-            <li>→ <a href="classifier.html" style="color:#a78bfa;text-decoration:none">Full prompt schema &amp; validation rules ↗</a></li>
+            <li>→ <a href="step_3_classification.classifier.html" style="color:#a78bfa;text-decoration:none">Full prompt schema &amp; validation rules ↗</a></li>
           </div>
         </div>
 
@@ -512,7 +512,7 @@
             <tr class="t-hard"><td>&gt; 365 days</td><td>Almost never CERTAIN</td></tr>
           </table>
           <div class="detail" style="margin-top:5px">
-            <li>→ <a href="classifier.html#ttr" style="color:#a78bfa;text-decoration:none">Category-specific notes ↗</a></li>
+            <li>→ <a href="step_3_classification.classifier.html#ttr" style="color:#a78bfa;text-decoration:none">Category-specific notes ↗</a></li>
           </div>
         </div>
 
@@ -552,7 +552,7 @@
         <div class="card output" style="flex:2; min-width:340px">
           <div class="card-title">
             Edge &amp; Sizing
-            <span class="badge badge-quant">opportunity_manager.py</span>
+            <span class="badge badge-quant">step_5_finalize/opportunity_manager.py</span>
           </div>
           <div class="detail" style="margin-top:4px">
             <li>Only processes <span class="tip tip-r" data-tip="Only CERTAIN classifications reach the opportunity manager — LIKELY and UNCLEAR are routed to the log and skipped.">CERTAIN</span> + valid classifications</li>
@@ -606,7 +606,7 @@
         </div>
 
         <div class="card output">
-          <div class="card-title">Excel Report <span style="color:#64748b;font-size:10px">excel_reporter.py</span></div>
+          <div class="card-title">Excel Report <span style="color:#64748b;font-size:10px">step_5_finalize/excel_reporter.py</span></div>
           <div class="sheet-list">
             <div class="sheet green"><strong>Opportunities</strong> — actionable (green) + <span class="tip" data-tip="CERTAIN-classified markets that were filtered out — validation errors, thin edge, or already notified. Shown in grey so the sheet is never misleadingly empty.">near-misses</span> (grey)</div>
             <div class="sheet" style="border-color:#7c3aed;color:#ddd6fe"><strong>All Results</strong> — every classified market with routing</div>
@@ -626,7 +626,7 @@
             <li>JSON Lines format — one record per line</li>
             <li>Includes routing decision, edge, sizing, timestamps</li>
             <li><span class="tip tip-r" data-tip="Deduplication state — tracks which opportunities were already notified and when. Entries expire after 7 days.">Dedup</span> state in cache/notified.json (7-day TTL)</li>
-            <li>This log is the input to the <a href="backtest.html" style="color:#99f6e4;text-decoration:none">Backtest ↗</a></li>
+            <li>This log is the input to the <a href="backtesting.backtest.html" style="color:#99f6e4;text-decoration:none">Backtest ↗</a></li>
           </div>
         </div>
 
@@ -642,7 +642,7 @@
 <h1 style="font-size:15px;margin-bottom:6px">Backtest — Retrospective Precision Scorer</h1>
 <p style="font-size:11px;color:#64748b;margin-bottom:20px">
   Runs independently of the scan pipeline. Reads historical classifications and scores them against actual market resolutions.
-  &nbsp;→ <a href="backtest.html" style="color:#99f6e4;text-decoration:none">Full backtest documentation ↗</a>
+  &nbsp;→ <a href="backtesting.backtest.html" style="color:#99f6e4;text-decoration:none">Full backtest documentation ↗</a>
 </p>
 
 <div class="backtest-flow">
@@ -718,7 +718,7 @@
 
     <div class="gterm new">
       <dt>Time-to-Resolution Factor</dt>
-      <dd>An adjustment to the CERTAIN classification threshold based on how many days remain until market close. Near-term markets (≤7 days) have little remaining surface area for surprises, so CERTAIN is easier to justify. Far-horizon markets (91–365 days) have more black-swan risk, policy changes, and new information — only structural impossibilities qualify. See <a href="classifier.html#ttr" style="color:#a78bfa">classifier.html</a> for the full tier table.</dd>
+      <dd>An adjustment to the CERTAIN classification threshold based on how many days remain until market close. Near-term markets (≤7 days) have little remaining surface area for surprises, so CERTAIN is easier to justify. Far-horizon markets (91–365 days) have more black-swan risk, policy changes, and new information — only structural impossibilities qualify. See <a href="step_3_classification.classifier.html#ttr" style="color:#a78bfa">classifier.html</a> for the full tier table.</dd>
     </div>
 
     <div class="gterm new">
@@ -830,7 +830,7 @@
 </details>
 
 <p style="margin-top:20px;font-size:10px;color:#334155;">
-  Updated May 2026 · scanner.py · anomaly_scanner.py · polymarket_scanner.py · market_clusterer.py · classifier.py · opportunity_manager.py · excel_reporter.py · backtest.py
+  Updated May 2026 · step_1_scan/scanner.py · step_1_scan/anomaly_scanner.py · step_1_scan/polymarket_scanner.py · step_1_scan/market_clusterer.py · step_3_classification/classifier.py · step_5_finalize/opportunity_manager.py · step_5_finalize/excel_reporter.py · backtesting/backtest.py
 </p>
 
 </body>

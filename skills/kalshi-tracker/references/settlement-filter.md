@@ -2,7 +2,7 @@
 
 When scanning for betting opportunities, many markets settle many years in the future, which makes them unsuitable for short‑term edge hunting.  A practical filter is to keep only markets whose `close_date` is within **one year** from the current time.
 
-## Python snippet (add to `scanner.py` after candidate generation)
+## Python snippet (add to `step_1_scan/scanner.py` after candidate generation)
 ```python
 from datetime import datetime, timezone, timedelta
 

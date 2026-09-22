@@ -5,8 +5,8 @@
 **Current approach:** All modes (including anomaly) use the two-phase pipeline:
 1. Run `python3 pythia-main anomaly` → saves `cache/anomaly_candidates.json`
 2. Phase 1: 3× Owl Alpha subagents research the anomaly candidates via `delegate_task`
-3. Phase 2: `python3 scripts/classify_all.py` → calls `Classifier.classify()` per ticker via LLM API → saves `cache/classified.json`
-4. `python3 scripts/verify_classifications.py`
+3. Phase 2: `python3 step_3_classification/classify_all.py` → calls `Classifier.classify()` per ticker via LLM API → saves `cache/classified.json`
+4. `python3 step_4_verify/verify_classifications.py`
 5. `python3 pythia-main finalize`
 
 **Why the change:** The programmatic batch script used rule-based heuristics with no web research. The two-phase approach does real web research via free Owl Alpha subagents, producing evidence-backed classifications with source URLs. Total time: ~3 min for 56 candidates.
@@ -35,7 +35,7 @@ delegate_task(tasks=[{
 
 ## 41. verify_classifications.py Has a Price Reality Check Bug (still present June 2026)
 
-**Bug:** The `verify_certain_classification()` function in `scripts/verify_classifications.py` has an inverted price check for NO-side CERTAIN classifications. The condition changed between May and June 2026 but remains wrong:
+**Bug:** The `verify_certain_classification()` function in `step_4_verify/verify_classifications.py` has an inverted price check for NO-side CERTAIN classifications. The condition changed between May and June 2026 but remains wrong:
 
 ```python
 # Current (buggy) logic as of June 2026:
@@ -54,9 +54,9 @@ elif side == 'NO' and price > 50:   # market prices YES > 50c → disagrees with
 
 **Status:** Not yet fixed in script.
 
-## 42. pipeline_logger.py Required by finalize (May 2026)
+## 42. shared/pipeline_logger.py Required by finalize (May 2026)
 
-`pythia-main finalize` imports `from pipeline_logger import get_logger`. This file is NOT generated automatically and must exist in the project root. If accidentally deleted, finalize crashes with `ModuleNotFoundError`.
+`pythia-main finalize` imports `from shared.pipeline_logger import get_logger`. This file is NOT generated automatically and must exist in the project root. If accidentally deleted, finalize crashes with `ModuleNotFoundError`.
 
 **Minimal replacement** (if deleted):
 ```python
@@ -85,11 +85,11 @@ def get_logger(name="kalshi"):
 3. `references/two-phase-pipeline.md` (mode-to-file mapping, cron layout)
 Do NOT edit individual cron prompts.
 
-## 43. Future-Event Settlement Detection in classifier.py (June 2026)
+## 43. Future-Event Settlement Detection in step_3_classification/classifier.py (June 2026)
 
 **Problem:** LLM classifiers research the *current* state of a market (e.g., current Senate seat count) but the market settles on a *future* state (post-2026 election Senate composition). The classifier finds current evidence that looks decisive and incorrectly outputs CERTAIN or high-LIKELY.
 
-**Fix:** Three-layer defense added to `classifier.py`:
+**Fix:** Three-layer defense added to `step_3_classification/classifier.py`:
 
 1. **`_detect_future_event(candidate)`** — keyword-based detection. Fires when ticker/title/rules match electoral/political composition keywords AND `days_to_close >= 14`. Returns a warning string or `""`.
    - Triggers on: `election`, `senate seats`, `house seats`, `congress`, `120th`, `confirm`, `legislation pass`, `referendum`, etc.
@@ -105,7 +105,7 @@ Do NOT edit individual cron prompts.
 
 **Problem:** Classifier LLM ignores real URLs from Phase 1 research and writes generic text descriptions as `source_url` (e.g., `"Kalshi Market Settlement Rules"`, `"General knowledge of WH Press Secretary tenures"`). Verify step then downgrades all affected CERTAINs.
 
-**Fix (all in `classifier.py`):**
+**Fix (all in `step_3_classification/classifier.py`):**
 
 1. **Schema example** — `confirming_signals` schema now shows `"source_url": "https://actual-url.com/article"` with CRITICAL note: "MUST be a real https:// URL... if no URL available use empty string."
 

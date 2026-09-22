@@ -16,7 +16,7 @@ sys.path.insert(0, SKILL_DIR)
 
 
 def cmd_scan(args):
-    from scanner import ScannerAgent
+    from step_1_scan.scanner import ScannerAgent
     cfg = {
         "price_threshold": 85, "deep_scan_threshold": 80,
         "spread_max": 3, "min_volume": 50,
@@ -32,7 +32,7 @@ def cmd_scan(args):
     elif args.mode == "k-incremental":
         candidates = scanner.incremental_scan()
     elif args.mode == "k-anomaly":
-        from anomaly_scanner import AnomalyScanner
+        from step_1_scan.anomaly_scanner import AnomalyScanner
         ascanner = AnomalyScanner({"candidates_file": os.path.join(SKILL_DIR, "cache", "anomaly_candidates.json")})
         candidates = ascanner.scan()
     else:
@@ -43,7 +43,7 @@ def cmd_scan(args):
 
 
 def cmd_pm_scan(args):
-    from polymarket_scanner import PolymarketScanner
+    from step_1_scan.polymarket_scanner import PolymarketScanner
     cfg = {
         "price_threshold": 85, "deep_scan_threshold": 80,
         "spread_max": 5, "min_volume": 1000,
@@ -68,7 +68,7 @@ def cmd_pm_scan(args):
 def cmd_classify(args):
     """Placeholder for LLM classification step.
     In production, this is done by the Hermes agent or an external LLM.
-    See classifier.py for prompt builders and validation logic."""
+    See step_3_classification/classifier.py for prompt builders and validation logic."""
     print(f"Classification step: load candidates from {args.file}")
     print("This step requires an LLM + web search — not implemented in standalone mode.")
     print("Use the Hermes agent or provide pre-classified results.")
@@ -76,11 +76,11 @@ def cmd_classify(args):
 
 
 def cmd_finalize(args):
-    from opportunity_manager import OpportunityManager
-    from excel_reporter import export_excel
+    from step_5_finalize.opportunity_manager import OpportunityManager
+    from step_5_finalize.excel_reporter import export_excel
     from datetime import datetime
     from collections import Counter
-    from classifier import validate_classification
+    from step_3_classification.classifier import validate_classification
 
     classified_file = os.path.join(SKILL_DIR, "cache", "classified.json")
     if not os.path.exists(classified_file):
@@ -124,7 +124,7 @@ def cmd_finalize(args):
 
 
 def cmd_backtest(args):
-    from backtest_agent import BacktestAgent
+    from backtesting.backtest_agent import BacktestAgent
     agent = BacktestAgent()
     settled = agent.fetch_settled_markets(limit=50)
     candidates = agent.prepare_backtest_candidates(settled)

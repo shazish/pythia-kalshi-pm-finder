@@ -26,14 +26,14 @@ The summary below is the source of truth for how each phase must work.
 - Output schema per entry: `{ticker, title, price, side, research: {searches_performed, findings, summary}}`
 
 ### Phase 2 — Classification
-- Run `python3 scripts/classify_all.py --run-dir {run_dir}`
+- Run `python3 step_3_classification/classify_all.py --run-dir {run_dir}`
 - Script calls `Classifier.classify()` once per ticker, checkpoints after each, resumes on restart
 - Saves to `cache/classified.json` AND `logs/{run_dir}/classified.json`
 
 **What is not allowed in Phase 2:**
 - Writing a Python file with classification tuples hardcoded per ticker
 - Reasoning about all tickers in a single in-context pass and writing the results as constants
-- Skipping `scripts/classify_all.py` and orchestrating `Classifier.classify()` calls in-context
+- Skipping `step_3_classification/classify_all.py` and orchestrating `Classifier.classify()` calls in-context
 - Pattern-matching or heuristic substitution for the per-ticker LLM call
 
 **In-context classification (no `--model` flag):**
@@ -42,7 +42,7 @@ The summary below is the source of truth for how each phase must work.
 - Give each subagent the candidate's raw data, research findings, and instructions to classify individually without referring to any other candidate for comparison.
 
 ### Step 3 — Verify
-- Run `python3 scripts/verify_classifications.py`
+- Run `python3 step_4_verify/verify_classifications.py`
 - Downgrades hallucinated or market-contradicted CERTAIN entries to LIKELY
 
 ### Finalize

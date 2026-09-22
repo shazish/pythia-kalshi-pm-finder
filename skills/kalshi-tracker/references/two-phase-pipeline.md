@@ -61,12 +61,12 @@ Each subagent saves `{ticker, title, price, side, hc_dollars, research: {searche
 2. Use `execute_code` with `web_search` directly for the remaining candidates — this reliably completes 17–18 candidates in ~83 seconds
 3. Do NOT retry delegate_task more than once per batch
 
-## Phase 2: Classification (`scripts/classify_all.py`)
+## Phase 2: Classification (`step_3_classification/classify_all.py`)
 
 Run the classification script — do NOT reason in-context or write hardcoded scripts:
 
 ```bash
-python3 scripts/classify_all.py --run-dir {run_dir}
+python3 step_3_classification/classify_all.py --run-dir {run_dir}
 ```
 
 Script behavior:
@@ -86,7 +86,7 @@ Script behavior:
 
 ## Phase 3: Verify
 
-Run `python3 scripts/verify_classifications.py` to fact-check CERTAIN entries.
+Run `python3 step_4_verify/verify_classifications.py` to fact-check CERTAIN entries.
 
 Downgrades CERTAIN → LIKELY if:
 - Any `confirming_signals[].source_url` doesn't start with `https://` (hallucinated URL)

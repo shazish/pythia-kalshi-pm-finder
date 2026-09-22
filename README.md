@@ -63,7 +63,7 @@ The classifier requires an LLM with web search (used via Hermes agent framework 
 1. Run scanner → `cache/candidates.json`
 2. Run research phase → `cache/research_batch{N}.json`
 3. Run classifier → `cache/classified.json`
-4. Run verifier: `python3 scripts/verify_classifications.py`
+4. Run verifier: `python3 step_4_verify/verify_classifications.py`
 5. Run `python3 cli.py finalize` for Excel report
 
 ## Configuration
@@ -105,27 +105,33 @@ Top opportunities included Discord IPO NO @ 89¢ (6.6% edge), Netanyahu pardon N
 
 ```
 kalshi-tracker/
-├── cli.py                  # Standalone CLI entry point
-├── scanner.py              # Kalshi Scanner Agent
-├── polymarket_scanner.py   # Polymarket Scanner Agent
-├── anomaly_scanner.py      # Volume-anomaly scanner
-├── classifier.py           # LLM prompt builder + validation
-├── opportunity_manager.py  # Edge calc + Kelly sizing
-├── excel_reporter.py       # Excel/CSV report writer
-├── kalshi_client.py        # Kalshi REST API wrapper
-├── polymarket_client.py    # Polymarket Gamma API wrapper
-├── backtest_agent.py       # Historical evaluation
-├── market_clusterer.py     # Multi-market clustering
-├── config.yaml             # Configuration
-├── pythia-main      # Pipeline entry point (scan + two-phase instructions)
-├── scripts/                # Batch classification + verify scripts
-├── tmp/                    # Temp scripts (not committed)
-├── docs/                   # HTML architecture diagrams
-├── kalshi-video/           # Explainer video (HTML deck)
-├── pyproject.toml          # Package metadata
-├── requirements.txt        # Dependencies
-└── README.md
+├── cli.py                    # Standalone CLI entry point
+├── pythia-main               # Full pipeline runner
+├── step_1_scan/              # Market scanners and clustering
+├── step_2_research/          # Search, research batches and validation
+├── step_3_classification/    # Classifier, anomaly scoring and batch tools
+├── step_4_verify/            # Evidence verification and challenges
+├── step_5_finalize/          # Opportunity sizing and Excel/CSV reports
+├── shared/                   # API clients, freshness, logging and sessions
+├── backtesting/              # Historical evaluation
+├── tests/                    # Automated tests
+├── config.yaml              # Pipeline configuration
+├── source_policy.json       # Verification source policy
+├── cache/                   # Runtime caches (not committed)
+├── logs/                    # Run artifacts (not committed)
+├── tmp/                     # Temporary scripts (not committed)
+├── docs/                    # Architecture and workflow documentation
+├── skills/                  # Agent workflow instructions
+├── assets/                  # Branding assets
+└── kalshi-video/            # Explainer video
 ```
+
+Folder names use underscores so each stage is a regular Python package.
+Run commands from the project root, for example
+`python3 step_3_classification/classify_all.py --help` or
+`python3 -m step_4_verify.verify_classifications --help`.
+Shared configuration, caches and logs remain relative to the project root.
+
 
 ## Video
 

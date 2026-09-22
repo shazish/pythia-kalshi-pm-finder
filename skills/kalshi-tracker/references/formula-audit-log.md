@@ -10,16 +10,16 @@ All calculation-bearing modules audited for correctness. Bugs found, fixed, comm
 
 | Module | Formula | Status |
 |--------|---------|--------|
-| scanner.py (479-509) | Urgency: `0.5×exp(-0.023×days) + 0.3×prob/100 + 0.2×min(log10(vol)/4, 1.0)` | ✓ Half-life ~30d, range 0-100 |
-| scanner.py (96-112) | Price change: `abs(new-old) >= threshold` | ✓ Both yes_bid + no_bid checked |
-| scanner.py (240-274) | Volume anomaly: `volume × opp_price / 100` | ✓ Contracts×cents→dollars |
-| scanner.py (165-191) | Combo detection: title leg count | ✓ Matches inline detection |
-| scanner.py (393) | Deep dedup: deep filters AND NOT primary | ✓ No overlap with full scan |
+| step_1_scan/scanner.py (479-509) | Urgency: `0.5×exp(-0.023×days) + 0.3×prob/100 + 0.2×min(log10(vol)/4, 1.0)` | ✓ Half-life ~30d, range 0-100 |
+| step_1_scan/scanner.py (96-112) | Price change: `abs(new-old) >= threshold` | ✓ Both yes_bid + no_bid checked |
+| step_1_scan/scanner.py (240-274) | Volume anomaly: `volume × opp_price / 100` | ✓ Contracts×cents→dollars |
+| step_1_scan/scanner.py (165-191) | Combo detection: title leg count | ✓ Matches inline detection |
+| step_1_scan/scanner.py (393) | Deep dedup: deep filters AND NOT primary | ✓ No overlap with full scan |
 | o_mgr.py (113-119) | Kalshi edge: `(p×profit×(1-r) - (1-p)×price) / price` | ✓ 5.4% at 90c/95%/1.5% fee |
 | o_mgr.py (105-112) | Polymarket edge: `EV / (price + price×fee)` | ✓ 4.5% at 90c/95%/1% fee |
 | o_mgr.py (222) | Annualized edge: `edge × 365 / days` | ✓ Linear annualization |
 | o_mgr.py (246-249) | Dual threshold: raw >= 3% OR ann >= 15% | ✓ Catches short-horizon |
-| classifier.py (384-444) | Metric consistency validation | ✓ YoY/QoQ/annualized detection |
+| step_3_classification/classifier.py (384-444) | Metric consistency validation | ✓ YoY/QoQ/annualized detection |
 
 ## 🐛 Bugs Found & Fixed
 

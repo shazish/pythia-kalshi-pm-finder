@@ -1,6 +1,6 @@
 # Category Filtering by Platform
 
-## Kalshi (scanner.py + anomaly_scanner.py)
+## Kalshi (step_1_scan/scanner.py + step_1_scan/anomaly_scanner.py)
 
 Both `ScannerAgent` and `AnomalyScanner` use the same `scan_categories` list from `DEFAULT_CONFIG`:
 
@@ -12,7 +12,7 @@ Events in any of these 6 categories are included. Everything else is excluded. T
 
 The Kalshi API categories include roughly 10+ categories (Sports, Health, Technology, Weather, etc.) but only these 6 are scanned.
 
-## Polymarket (polymarket_scanner.py)
+## Polymarket (step_1_scan/polymarket_scanner.py)
 
 ### Scan categories
 ```python
@@ -21,7 +21,7 @@ The Kalshi API categories include roughly 10+ categories (Sports, Health, Techno
 
 Events must match one of these 5 categories to be included.
 
-### Category mapping (polymarket_client.py CATEGORY_MAP)
+### Category mapping (shared/polymarket_client.py CATEGORY_MAP)
 
 Polymarket's Gamma API stores categories as tags. The `CATEGORY_MAP` normalizes raw tags to internal names:
 
@@ -36,7 +36,7 @@ Polymarket's Gamma API stores categories as tags. The `CATEGORY_MAP` normalizes 
 | Crypto, Cryptocurrency | None | **Excluded** |
 | Anything not in map | None | **Excluded** |
 
-Markets where `CATEGORY_MAP` returns `None` are skipped at the scanner level (line 120-121 of polymarket_scanner.py):
+Markets where `CATEGORY_MAP` returns `None` are skipped at the scanner level (line 120-121 of step_1_scan/polymarket_scanner.py):
 
 ```python
 # Skip markets where category was not mappable (None = excluded category)

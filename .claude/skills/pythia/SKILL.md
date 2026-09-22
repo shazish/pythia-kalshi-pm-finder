@@ -19,7 +19,7 @@ router just resolves `$mode` to the right `./pythia-main` invocation and the
 step-by-step in `CLAUDE.md`. `CLAUDE.md` at the project root is the source of
 truth for pipeline behavior -- read it before running anything, and follow its
 prohibitions (no hardcoded classification results, no in-context shortcuts for
-Phase 2, no skipping `scripts/classify_all.py` or `scripts/verify_classifications.py`).
+Phase 2, no skipping `step_3_classification/classify_all.py` or `step_4_verify/verify_classifications.py`).
 
 ## Mode Routing
 
@@ -63,10 +63,10 @@ Once `$mode` resolves to a scan mode:
    ends there -- report that and stop.
 2. If candidates are found, the script prints the remaining steps itself.
    Follow them in order, exactly as printed and as specified in `CLAUDE.md`:
-   - Step 3: `python3 scripts/classify_all.py --run-dir {run_dir}` (per-ticker
+   - Step 3: `python3 step_3_classification/classify_all.py --run-dir {run_dir}` (per-ticker
      LLM classification for research-backed modes; quantitative scoring +
      veto LLM for `*-anomaly` modes)
-   - Step 4: `python3 scripts/verify_classifications.py`
+   - Step 4: `python3 step_4_verify/verify_classifications.py`
    - Step 5: `python3 pythia-main finalize`
 3. Do not substitute, skip, or hardcode any of these steps. If a step would
    require a shortcut (e.g. no API key, or an editor-mode CLI needing

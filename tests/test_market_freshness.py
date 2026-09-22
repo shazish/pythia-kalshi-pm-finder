@@ -5,10 +5,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from market_freshness import MarketFreshness, stamp_response
-from opportunity_manager import OpportunityManager
-from kalshi_client import KalshiClient
-from polymarket_client import PolymarketClient
+from shared.market_freshness import MarketFreshness, stamp_response
+from step_5_finalize.opportunity_manager import OpportunityManager
+from shared.kalshi_client import KalshiClient
+from shared.polymarket_client import PolymarketClient
 
 
 def stamp(seconds=0):
@@ -80,7 +80,7 @@ class FreshnessTests(unittest.TestCase):
         payload = stamp_response({"events": [{"markets": [{"ticker": "TEST"}]}]})
         raw = payload["events"][0]["markets"][0]
         self.assertEqual(KalshiClient().normalize_market(raw)["market_data_at"], raw["_market_data_at"])
-        from polymarket_scanner import PolymarketScanner
+        from step_1_scan.polymarket_scanner import PolymarketScanner
         raw = stamp_response({"id": "123", "bestBid": .89, "bestAsk": .90})
         market = PolymarketClient().normalize_market(raw)
         # Avoid scanner initialization and persistent cache access.
@@ -109,7 +109,7 @@ class FreshnessTests(unittest.TestCase):
             saved = copy.deepcopy(entry)
             manager = OpportunityManager({"notified_cache": str(Path(tmp) / "notified.json")},
                                          market_fetcher=lambda _: candidate(yes_ask=97))
-            with patch("opportunity_manager.verification_passes", return_value=True):
+            with patch("step_5_finalize.opportunity_manager.verification_passes", return_value=True):
                 notify, logged = manager.process([entry])
             self.assertEqual(notify, [])
             self.assertLess(logged[0]["edge_after_fees"], 0)
@@ -127,12 +127,12 @@ class FreshnessTests(unittest.TestCase):
             entry = {"candidate": candidate(market_data_at=None), "classification": {
                 "classification": "CERTAIN", "_valid": True, "confidence_score": 95,
                 "high_confidence_side": "YES"}}
-            with patch("opportunity_manager.verification_passes", return_value=True):
+            with patch("step_5_finalize.opportunity_manager.verification_passes", return_value=True):
                 notify, _ = manager.process([entry])
             self.assertEqual(notify[0]["exec_price"], .80)
             self.assertGreater(notify[0]["position_size_usd"], 0)
             fetch.side_effect = TimeoutError()
-            with patch("opportunity_manager.verification_passes", return_value=True), \
+            with patch("step_5_finalize.opportunity_manager.verification_passes", return_value=True), \
                  patch.object(manager, "compute_edge", side_effect=AssertionError("must not size")):
                 notify, logged = manager.process([entry])
             self.assertEqual(notify, [])
@@ -145,10 +145,10 @@ class FreshnessTests(unittest.TestCase):
             entry = {"candidate": candidate(market_data_at=None), "classification": {
                 "classification": "CERTAIN", "_valid": True, "confidence_score": 95,
                 "high_confidence_side": "NO"}}
-            with patch("opportunity_manager.verification_passes", return_value=True):
+            with patch("step_5_finalize.opportunity_manager.verification_passes", return_value=True):
                 _, logged = manager.process([entry])
             self.assertEqual(logged[0]["exec_price"], .97)
-            from excel_reporter import OPPORTUNITY_COLS
+            from step_5_finalize.excel_reporter import OPPORTUNITY_COLS
             fields = {name: fn(logged[0]) for name, _, fn in OPPORTUNITY_COLS}
             self.assertEqual(fields["Scan NO Ask (c)"], 11)
             self.assertEqual(fields["Ask Price (c)"], 97)

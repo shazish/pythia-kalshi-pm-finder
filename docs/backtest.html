@@ -201,8 +201,8 @@
 
 <nav>
   <a href="pipeline.html">Pipeline Overview</a>
-  <a href="classifier.html">Classifier Detail</a>
-  <a href="backtest.html" class="active">Backtest</a>
+  <a href="step_3_classification.classifier.html">Classifier Detail</a>
+  <a href="backtesting.backtest.html" class="active">Backtest</a>
 </nav>
 
 <h1>Backtest — Retrospective Precision Scorer</h1>
@@ -330,7 +330,7 @@
     No partial credit, no probability weighting.
   </p>
 
-  <pre><span class="c"># Core scoring logic (simplified from backtest.py)</span>
+  <pre><span class="c"># Core scoring logic (simplified from backtesting/backtest.py)</span>
 
 <span class="k">for</span> entry, resolution <span class="k">in</span> resolved:
     clf = entry[<span class="s">"classification"</span>]
@@ -551,7 +551,7 @@ python3 kalshi_cron.py backtest
 
 <span class="c"># Directly</span>
 cd ~/.hermes/kalshi-tracker
-python3 backtest.py</pre>
+python3 backtesting/backtest.py</pre>
 
   <h3>Output files</h3>
   <pre><span class="c"># Terminal: human-readable report</span>
@@ -578,7 +578,7 @@ python3 backtest.py</pre>
 </div>
 
 <p style="margin-top:20px;font-size:10px;color:#334155;">
-  backtest.py · kalshi_client.py · logs/opportunities.jsonl · backtests/ · Updated May 2026
+  backtesting/backtest.py · shared/kalshi_client.py · logs/opportunities.jsonl · backtests/ · Updated May 2026
 </p>
 
 </body>

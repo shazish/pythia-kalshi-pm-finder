@@ -45,7 +45,7 @@ Read each research batch, classify each candidate based SOLELY on the research e
 
 ```
 delegate_task(tasks=[
-    {goal: "Classify candidates from cache/research_batch0.json based SOLELY on the research evidence in each entry. Read each entry's research field, reason about what the evidence implies, produce a classification dict with: classification (CERTAIN/LIKELY/UNCLEAR), confidence_score (0-100), high_confidence_side (YES/NO), reasons (array, min 3), confirming_signals (array of {fact, source_url}), contradicting_signals (array), what_would_change_this (string), recent_developments (string), searched_for (array). Import validate_classification from classifier.py and run it on each output. Save to cache/results_batch0.json.",
+    {goal: "Classify candidates from cache/research_batch0.json based SOLELY on the research evidence in each entry. Read each entry's research field, reason about what the evidence implies, produce a classification dict with: classification (CERTAIN/LIKELY/UNCLEAR), confidence_score (0-100), high_confidence_side (YES/NO), reasons (array, min 3), confirming_signals (array of {fact, source_url}), contradicting_signals (array), what_would_change_this (string), recent_developments (string), searched_for (array). Import validate_classification from step_3_classification/classifier.py and run it on each output. Save to cache/results_batch0.json.",
      model: {model: "deepseek/deepseek-v4-flash", provider: "nous"},
      toolsets: [terminal, file]},
     ...  # 3 batches total

@@ -307,8 +307,8 @@
 
 <nav>
   <a href="pipeline.html">Pipeline Overview</a>
-  <a href="classifier.html" class="active">Classifier Detail</a>
-  <a href="backtest.html">Backtest</a>
+  <a href="step_3_classification.classifier.html" class="active">Classifier Detail</a>
+  <a href="backtesting.backtest.html">Backtest</a>
 </nav>
 
 <h1>Classifier — Full Reference</h1>
@@ -707,7 +707,7 @@
   <h2>Cluster Context — Market Grouping Input</h2>
   <p style="font-size:11px;color:#64748b;margin-bottom:14px">
     Each candidate prompt may include a CLUSTER CONTEXT block listing sibling markets from the same event.
-    This is appended automatically by <code>market_clusterer.py</code> before the classifier receives the candidate.
+    This is appended automatically by <code>step_1_scan/market_clusterer.py</code> before the classifier receives the candidate.
   </p>
 
   <div class="callout teal">
@@ -735,7 +735,7 @@ Sibling markets share the same underlying event — ensure your conclusion is co
 </div>
 
 <p style="margin-top:20px;font-size:10px;color:#334155;">
-  classifier.py · market_clusterer.py · kalshi_cron.py · Updated May 2026
+  step_3_classification/classifier.py · step_1_scan/market_clusterer.py · kalshi_cron.py · Updated May 2026
 </p>
 
 </body>

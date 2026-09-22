@@ -56,7 +56,7 @@ Read all research batches, classify each candidate based SOLELY on the research 
 ```python
 # In execute_code:
 import json
-from classifier import validate_classification
+from step_3_classification.classifier import validate_classification
 
 all_research = []
 for i in range(3):
@@ -80,7 +80,7 @@ for entry in all_research:
 
 **Before reporting any opportunity as actionable:**
 
-1. **Run verify_classifications.py** — `python3 scripts/verify_classifications.py`
+1. **Run verify_classifications.py** — `python3 step_4_verify/verify_classifications.py`
    - ⚠ **KNOWN BUG (May 2026):** The script's price reality check incorrectly downgrades CERTAIN NO when the market agrees (low YES implied probability). After running, manually review all CERTAIN→LIKELY downgrades:
      - If side=NO and YES implied probability < 20c → restore CERTAIN (false positive)
      - If side=YES and YES implied probability > 80c → same false positive pattern
@@ -122,7 +122,7 @@ The merge script must handle both. Detect the format by checking if `entry.get('
 2. Run: `cd ~/kalshi-tracker && python3 pythia-main finalize`
 3. Produce CSV: read classified.json, write logs/kalshi_{timestamp}.csv
 
-## Validation Rules (from classifier.py validate_classification)
+## Validation Rules (from step_3_classification/classifier.py validate_classification)
 
 - **CERTAIN** requires ALL of: confidence >= 95, >=3 reasons, >=3 confirming_signals, 0 contradicting_signals, what_would_change_this non-empty, recent_developments non-empty, >=3 searched_for
 - Auto-downgrade to LIKELY if validation fails

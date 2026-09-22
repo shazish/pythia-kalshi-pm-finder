@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import test_verification
 from test_verification import TEXT
-from article_review import ArticleReviewer
+from step_4_verify.article_review import ArticleReviewer
 
 
 class FakeClient:
@@ -109,7 +109,7 @@ class AutomaticReviewTests(unittest.TestCase):
 
     def test_context_over_budget_is_not_silently_truncated(self):
         client = FakeClient()
-        with patch("article_review.MAX_INPUT_CHARS", 10):
+        with patch("step_4_verify.article_review.MAX_INPUT_CHARS", 10):
             report, reviews, errors, _ = self.execute(client)
         self.assertFalse(client.calls)
         self.assertTrue(errors)
@@ -141,7 +141,7 @@ class AutomaticReviewTests(unittest.TestCase):
     def test_default_pipeline_runs_automatic_review(self):
         import importlib.util
         from pathlib import Path
-        spec = importlib.util.spec_from_file_location("verify_cli", "scripts/verify_classifications.py")
+        spec = importlib.util.spec_from_file_location("verify_cli", "step_4_verify/verify_classifications.py")
         cli = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cli)
         run = Path(self.f.tmp.name) / "run"
@@ -154,10 +154,10 @@ class AutomaticReviewTests(unittest.TestCase):
         reviewer = ArticleReviewer(client=client)
         with patch("sys.argv", ["verify", "--run-dir", str(run),
                                "--evidence-cache", str(self.f.cache.directory)]), \
-                patch("article_review.ArticleReviewer", return_value=reviewer):
+                patch("step_4_verify.article_review.ArticleReviewer", return_value=reviewer):
             self.assertEqual(cli.main(), 0)
         self.assertEqual(len(client.calls), 1)
         self.assertTrue((run / "evidence_reviews.json").exists())
-        from verification import verification_passes
+        from step_4_verify.verification import verification_passes
         saved = json.loads((run / "classified.json").read_text())[0]
         self.assertTrue(verification_passes(saved["candidate"], saved["classification"]))

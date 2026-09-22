@@ -24,10 +24,10 @@ text are supported; PDFs or inaccessible articles require a readable alternative
 ## Run and model configuration
 
 ```sh
-python3 scripts/verify_classifications.py --run-dir logs/YOUR_RUN
-python3 scripts/verify_classifications.py --run-dir logs/YOUR_RUN --model YOUR_MODEL
-python3 scripts/verify_classifications.py --run-dir logs/YOUR_RUN --manual
-python3 scripts/verify_classifications.py --run-dir logs/YOUR_RUN --offline
+python3 step_4_verify/verify_classifications.py --run-dir logs/YOUR_RUN
+python3 step_4_verify/verify_classifications.py --run-dir logs/YOUR_RUN --model YOUR_MODEL
+python3 step_4_verify/verify_classifications.py --run-dir logs/YOUR_RUN --manual
+python3 step_4_verify/verify_classifications.py --run-dir logs/YOUR_RUN --offline
 python3 -m unittest discover -s tests -v
 ```
 

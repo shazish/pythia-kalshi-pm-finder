@@ -184,8 +184,8 @@ Anomaly mode uses the same two-phase pipeline as all other modes. See `reference
 ```
 python3 pythia-main anomaly          # scan → cache/anomaly_candidates.json
 # Phase 1: Owl Alpha research subagents → cache/research_batch{N}.json
-python3 scripts/classify_all.py             # Phase 2 → cache/classified.json
-python3 scripts/verify_classifications.py   # Step 3
+python3 step_3_classification/classify_all.py             # Phase 2 → cache/classified.json
+python3 step_4_verify/verify_classifications.py   # Step 3
 python3 pythia-main finalize         # Excel report
 ```
 

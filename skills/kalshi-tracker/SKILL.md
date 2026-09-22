@@ -31,7 +31,7 @@ high-certainty betting opportunities.
 ┌─────────────────┐ ┌──────────────────────────────┐
 │  Scanner Agent   │ │  Phase 1 (Owl Alpha, free)  │
 │  (no LLM)        │ │  Sequential — one batch at a  │
-│  scanner.py      │ │  time to avoid 401/timeout    │
+│  step_1_scan/scanner.py      │ │  time to avoid 401/timeout    │
 │  anomaly_scanner │ │  web research only           │
 │  polymarket      │ │  saves research_batch{N}.json │
 └────────┬─────────┘ └──────────┬───────────────────┘
@@ -70,12 +70,12 @@ high-certainty betting opportunities.
 | File | Purpose |
 |------|---------|
 | `pythia-main` | **Single entry point** for all modes. Runs scan and prints pipeline instructions. |
-| `scanner.py` | Scanner — category filtering (now includes Health, Finance), combo detection, caching |
-| `anomaly_scanner.py` | Volume-first smart-money anomaly scanner |
-| `polymarket_scanner.py` | Polymarket scanner (USDC settlement) |
-| `polymarket_client.py` | Polymarket Gamma API client with CATEGORY_MAP |
-| `classifier.py` | `validate_classification()` — the validation function all classifiers must call |
-| `opportunity_manager.py` | Edge calculation, Kelly sizing, notification routing, Excel export |
+| `step_1_scan/scanner.py` | Scanner — category filtering (now includes Health, Finance), combo detection, caching |
+| `step_1_scan/anomaly_scanner.py` | Volume-first smart-money anomaly scanner |
+| `step_1_scan/polymarket_scanner.py` | Polymarket scanner (USDC settlement) |
+| `shared/polymarket_client.py` | Polymarket Gamma API client with CATEGORY_MAP |
+| `step_3_classification/classifier.py` | `validate_classification()` — the validation function all classifiers must call |
+| `step_5_finalize/opportunity_manager.py` | Edge calculation, Kelly sizing, notification routing, Excel export |
 | `docs/two-phase-classifier.md` | Two-phase pipeline reference (copy of the Hermes skill) |
 
 ## Scan Categories
@@ -104,14 +104,14 @@ python3 pythia-main [mode]
 #    If Owl Alpha times out, fall back to execute_code with web_search
 
 # 3. Phase 2 — run classify_all.py (NOT in-context reasoning or hardcoded scripts)
-#    python3 scripts/classify_all.py --run-dir {run_dir}
+#    python3 step_3_classification/classify_all.py --run-dir {run_dir}
 #    Script calls Classifier.classify() once per ticker via LLM API
 #    Checkpoints after each ticker — safe to kill and restart
 #    Saves directly to cache/classified.json (no separate merge step needed)
 #    Lockfile at cache/classify_all.lock prevents parallel runs
 
 # 4. Step 3 — Verify CERTAIN entries against settlement sources
-#    Run: python3 scripts/verify_classifications.py
+#    Run: python3 step_4_verify/verify_classifications.py
 #    ⚠ KNOWN BUG: price reality check incorrectly flags CERTAIN NO when market agrees
 #      (price < 50 = low YES = market AGREES with NO, but script flags it as disagreement)
 #      See references/pitfalls.md #41.
@@ -134,8 +134,8 @@ python3 pythia-main finalize
 - Save format: `{ticker, title, price, side, hc_dollars, research: {searches_performed, findings, summary}}`
 - DO NOT classify — research only
 
-**Phase 2 (Classification — `scripts/classify_all.py`):**
-- Run: `python3 scripts/classify_all.py --run-dir {run_dir}`
+**Phase 2 (Classification — `step_3_classification/classify_all.py`):**
+- Run: `python3 step_3_classification/classify_all.py --run-dir {run_dir}`
 - Calls `Classifier.classify()` once per ticker via LLM API, injects Phase 1 research into prompt
 - Checkpoints after each ticker — safe to kill and restart (skips already-classified tickers)
 - Lockfile at `cache/classify_all.lock` prevents parallel runs from overwriting each other

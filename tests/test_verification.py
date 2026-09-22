@@ -6,9 +6,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from verification import (EvidenceCache, digest, fresh, load_policy, now, source_category,
+from step_4_verify.verification import (EvidenceCache, digest, fresh, load_policy, now, source_category,
                           verification_passes, verify_entry)
-from opportunity_manager import OpportunityManager
+from step_5_finalize.opportunity_manager import OpportunityManager
 
 URL = "https://www.nytimes.com/example"
 TEXT = "The official final result for the specified reporting period was 42 units. " * 3
@@ -199,7 +199,7 @@ class VerificationTests(unittest.TestCase):
         (run / "classified.json").write_text(json.dumps([self.entry]))
         (run / "research_batch0.json").write_text(json.dumps([
             {"ticker": "TEST", "research": self.research}]))
-        command = [sys.executable, "scripts/verify_classifications.py", "--offline",
+        command = [sys.executable, "step_4_verify/verify_classifications.py", "--offline",
                    "--run-dir", str(run), "--evidence-cache", str(self.cache.directory)]
         first = subprocess.run(command, capture_output=True, text=True)
         self.assertEqual(first.returncode, 1, first.stderr)
