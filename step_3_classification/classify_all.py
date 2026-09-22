@@ -33,20 +33,7 @@ REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 os.chdir(REPO)
 
-def _run_cache() -> Path:
-    """Return the active run's cache directory.
-    Priority: KALSHI_CACHE_DIR env var → logs/.current_run → REPO/cache (legacy fallback).
-    Call _set_run_cache_from_run_dir() before using this if --run-dir was passed.
-    """
-    if "KALSHI_CACHE_DIR" in os.environ:
-        return Path(os.environ["KALSHI_CACHE_DIR"])
-    crfile = REPO / "logs" / ".current_run"
-    if crfile.exists():
-        run_dir = crfile.read_text().strip()
-        run_path = REPO / "logs" / run_dir
-        if run_path.is_dir():
-            return run_path
-    return REPO / "cache"
+from shared.config import load_config, artifact_path, run_cache as _run_cache
 
 SEP = "=" * 60
 
@@ -99,19 +86,19 @@ if args.model:
 
 run_dir = args.run_dir
 if not run_dir:
-    crfile = REPO / "logs" / ".current_run"   # written by pythia-main
+    crfile = Path(load_config()["log_dir"]) / ".current_run"   # written by pythia-main
     if crfile.exists():
         run_dir = crfile.read_text().strip()
 
 # If --run-dir explicitly given, anchor KALSHI_CACHE_DIR to that folder so all
 # reads/writes (batches, classified, lock) target the correct past session.
 if args.run_dir and "KALSHI_CACHE_DIR" not in os.environ:
-    explicit_run_path = REPO / "logs" / args.run_dir
+    explicit_run_path = Path(load_config()["log_dir"]) / args.run_dir
     if explicit_run_path.is_dir():
         os.environ["KALSHI_CACHE_DIR"] = str(explicit_run_path)
 
-CLASSIFIED_FILE = _run_cache() / "classified.json"
-LOG_CLASSIFIED  = (REPO / "logs" / run_dir / "classified.json") if run_dir else None
+CLASSIFIED_FILE = artifact_path("classified_file")
+LOG_CLASSIFIED  = (Path(load_config()["log_dir"]) / run_dir / "classified.json") if run_dir else None
 LOCK_FILE       = _run_cache() / "classify_all.lock"
 # When KALSHI_CACHE_DIR points to the run folder itself, LOG_CLASSIFIED == CLASSIFIED_FILE
 if LOG_CLASSIFIED and LOG_CLASSIFIED.resolve() == CLASSIFIED_FILE.resolve():

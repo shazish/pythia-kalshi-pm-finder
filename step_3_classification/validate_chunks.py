@@ -25,22 +25,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 os.chdir(REPO)
 
-def _run_cache():
-    if "KALSHI_CACHE_DIR" in os.environ:
-        return Path(os.environ["KALSHI_CACHE_DIR"])
-    crfile = REPO / "logs" / ".current_run"
-    if crfile.exists():
-        run_dir = crfile.read_text().strip()
-        run_path = REPO / "logs" / run_dir
-        if run_path.is_dir():
-            return run_path
-    return REPO / "cache"
+from shared.config import load_config, run_cache as _run_cache
 
 def main():
     if "--run-dir" in sys.argv:
         idx = sys.argv.index("--run-dir")
         if idx + 1 < len(sys.argv):
-            os.environ["KALSHI_CACHE_DIR"] = str(REPO / "logs" / sys.argv[idx + 1])
+            os.environ["KALSHI_CACHE_DIR"] = str(Path(load_config()["log_dir"]) / sys.argv[idx + 1])
 
     cache = _run_cache()
     errors = []

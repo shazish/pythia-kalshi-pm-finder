@@ -10,28 +10,12 @@ import time
 from datetime import datetime, timezone
 from shared.kalshi_client import KalshiClient
 
-DEFAULT_CONFIG = {
-    "price_threshold": 90,          # cents — primary filter (high-confidence only)
-    "deep_scan_threshold": 80,      # cents — secondary daily scan (broader net)
-    "spread_max": 3,                # max bid-ask spread in cents
-    "min_volume": 50,               # minimum volume as secondary signal
-    "deep_spread_min_volume": 200,  # higher volume floor for wide-spread (spread > spread_max) markets in deep scan
-    "max_ask_price": 95,             # cents — upper ceiling; ask ≥96 can't clear 3% edge after fees
-    "price_change_threshold": 3,    # cents — meaningful change vs cache
-    "max_pages": 20,                # max event pages per full scan (2,000 events)
-    "incremental_max_pages": 5,     # max market pages per incremental scan (500 markets)
-    "cache_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/market_cache.json"),
-    "candidates_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/candidates.json"),
-    # Categories where "obvious outcome" markets exist
-    "scan_categories": ["Politics", "Economics", "Entertainment", "Weather", "World", "Elections", "Health", "Finance"],
-    # Volume anomaly: flag when implied $ on the opposite (longshot) side exceeds this
-    "volume_anomaly_threshold": 5000,
-}
+from shared.config import SCANNER_DEFAULTS as DEFAULT_CONFIG, component_config
 
 
 class ScannerAgent:
     def __init__(self, config=None):
-        self.config = {**DEFAULT_CONFIG, **(config or {})}
+        self.config = component_config("scanner", config)
         self.client = KalshiClient()
         self.cache = self._load_cache()
 

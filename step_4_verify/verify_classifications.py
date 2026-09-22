@@ -14,6 +14,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
+from shared.config import load_config, run_cache, artifact_path
 from step_4_verify.verification import (EvidenceCache, atomic_json, load_policy, split_entry,
                           verify_entry)
 
@@ -21,19 +22,14 @@ from step_4_verify.verification import (EvidenceCache, atomic_json, load_policy,
 def run_directory(value=None):
     if value:
         return Path(value).resolve()
-    if os.environ.get("KALSHI_CACHE_DIR"):
-        return Path(os.environ["KALSHI_CACHE_DIR"])
-    pointer = REPO / "logs" / ".current_run"
-    if pointer.exists():
-        return REPO / "logs" / pointer.read_text().strip()
-    return REPO / "cache"
+    return run_cache()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dir", help="Path to a run directory")
     parser.add_argument("--offline", action="store_true", help="Use fresh cached evidence only")
-    parser.add_argument("--evidence-cache", type=Path, default=REPO / "cache" / "source_evidence",
+    parser.add_argument("--evidence-cache", type=Path, default=Path(load_config()["cache_dir"]) / "source_evidence",
                         help="Override source cache directory for isolated audits")
     parser.add_argument("--model", help="Evidence-review model (defaults to VERIFIER_MODEL or classifier configuration)")
     parser.add_argument("--manual", action="store_true", help="Capture evidence and consume saved reviews without model calls")
@@ -44,7 +40,8 @@ def main():
         raise ValueError("No fresh cached evidence; offline mode")
     cache = EvidenceCache(args.evidence_cache.resolve(), policy,
                           **({"fetcher": offline_fetch} if args.offline else {}))
-    results = json.loads((directory / "classified.json").read_text())
+    classified_path = directory / "classified.json" if args.run_dir else artifact_path("classified_file")
+    results = json.loads(classified_path.read_text())
     research = {}
     for path in sorted(directory.glob("research_batch*.json")):
         for item in json.loads(path.read_text()):
@@ -75,13 +72,13 @@ def main():
             for check in report["checks"]:
                 if check.get("review_id") in errors:
                     check["automatic_review_error"] = errors[check["review_id"]]
-            atomic_json(directory / "classified.json", results)
+            atomic_json(classified_path, results)
         counts[report["status"]] += 1
         reports.append({"ticker": candidate.get("ticker"), "candidate": candidate,
                         "classification": {k: v for k, v in classification.items()
                                            if not k.startswith("_")}, "verification": report})
         print(f"{candidate.get('ticker')}: {report['status']}")
-    atomic_json(directory / "classified.json", results)
+    atomic_json(classified_path, results)
     atomic_json(directory / "verification_report.json", {"counts": counts, "entries": reports})
     from shared.pipeline_run_log import RunLog
     RunLog(directory / "pipeline_run.md").step_evidence_verify(counts)

@@ -11,39 +11,14 @@ from datetime import datetime, timezone
 from step_4_verify.verification import verification_passes
 from shared.market_freshness import MarketFreshness
 
-DEFAULT_CONFIG = {
-    "min_edge_after_fees": 0.03,     # 3% minimum edge to notify (baseline for 30-day market)
-    "min_edge_annualized": 0.15,     # 15% annualized edge minimum — time-adjusted threshold
-    "max_bankroll_pct": 0.05,        # max 5% of bankroll per opportunity
-    "default_bankroll": 1000.0,      # default bankroll in dollars
-    "fee_rate": 0.015,               # ~1.5% average Kalshi fee (quadratic model on profits)
-    "pm_fee_rate": 0.005,            # ~0.5% effective Polymarket fee (maker ~0%, taker ~1-1.5%, blended)
-    "pm_fee_rates_by_category": {    # Polymarket taker fees by category (maker = 0%)
-        "Politics": 0.010,           # 1.0%
-        "Economics": 0.015,          # 1.5%
-        "Entertainment": 0.010,      # ~1.0% (culture/mentions blended)
-        "World": 0.010,              # ~1.0% (geopolitics/politics)
-        "Science": 0.010,            # ~1.0%
-        "Sports": 0.0075,            # 0.75%
-        "Crypto": 0.018,             # 1.8%
-        "Finance": 0.010,            # 1.0%
-        "Tech": 0.010,               # 1.0%
-        "Weather": 0.0125,           # 1.25%
-    },
-    "dashboard_log": os.path.expanduser("~/.hermes/kalshi-tracker/logs/opportunities.jsonl"),
-    "notified_cache": os.path.expanduser("~/.hermes/kalshi-tracker/cache/notified.json"),
-    "max_market_age_seconds": 300,  # refresh quotes older than five minutes
-    "notify_ttl_hours": 168,         # 7 days before re-notifying same market
-}
+from shared.config import OPPORTUNITY_DEFAULTS as DEFAULT_CONFIG, component_config
 
 
 class OpportunityManager:
     def __init__(self, config=None, market_fetcher=None):
-        self.config = {**DEFAULT_CONFIG, **(config or {})}
+        self.config = component_config("opportunity", config)
         self.notified = self._load_notified()
-        max_age = (config or {}).get("max_market_age_seconds",
-            os.environ.get("KALSHI_MAX_MARKET_AGE_SECONDS", self.config["max_market_age_seconds"]))
-        self.market_freshness = MarketFreshness(max_age, market_fetcher)
+        self.market_freshness = MarketFreshness(self.config["max_market_age_seconds"], market_fetcher)
 
     # ── Notified cache (deduplication) ─────────────────────────────
 

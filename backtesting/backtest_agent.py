@@ -11,16 +11,12 @@ import os
 from datetime import datetime, timezone
 from shared.kalshi_client import KalshiClient
 
-DEFAULT_CONFIG = {
-    "sample_size": 50,              # minimum markets to evaluate
-    "min_precision": 0.95,          # minimum acceptable precision for CERTAIN
-    "results_dir": os.path.expanduser("~/.hermes/kalshi-tracker/backtests"),
-}
+from shared.config import BACKTEST_DEFAULTS as DEFAULT_CONFIG, component_config
 
 
 class BacktestAgent:
     def __init__(self, config=None):
-        self.config = {**DEFAULT_CONFIG, **(config or {})}
+        self.config = component_config("backtest", config)
         self.client = KalshiClient()
 
     def fetch_settled_markets(self, limit=None):

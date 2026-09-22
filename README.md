@@ -68,7 +68,26 @@ The classifier requires an LLM with web search (used via Hermes agent framework 
 
 ## Configuration
 
-Edit `config.yaml` or set environment variables:
+The core pipeline loads the repository's `config.yaml` automatically, regardless of
+working directory. Use `KALSHI_CONFIG_FILE=/path/to/config.yaml` to select another
+file. Precedence is built-in defaults < YAML < `KALSHI_<KEY_UPPERCASE>` environment
+variables < explicit Python constructor overrides. Settings are loaded when a
+component is created; invalid types fail with a configuration error.
+
+Relative paths are resolved against the YAML file's directory, and `~` is expanded.
+The shipped paths use repository `cache/`, `logs/`, and `backtests/`. Changing a
+directory also relocates its default child files; a file path in the same or a
+higher-precedence layer wins. The full runner still writes per-run artifacts to
+its run folder; persistent scanner caches stay at their configured paths.
+`KALSHI_CACHE_DIR` and the configured log directory's `.current_run` pointer retain
+precedence for active classification/verification run artifacts.
+
+Kalshi scanner keys are unprefixed. Polymarket and anomaly scanner settings use
+`pm_` and `anomaly_` keys (for example, `pm_min_volume` / `KALSHI_PM_MIN_VOLUME`),
+so their different liquidity limits and cache files remain independent. Numeric
+environment values are parsed as YAML numbers; lists and maps use YAML syntax.
+
+Examples of supported environment overrides:
 
 | Variable | Default | Description |
 |----------|---------|-------------|

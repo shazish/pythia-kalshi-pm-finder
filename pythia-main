@@ -36,60 +36,19 @@ REPO = Path(__file__).parent
 SKILL_DIR = str(REPO)
 sys.path.insert(0, SKILL_DIR)
 
-RECENCY_DAYS = int(os.environ.get("KALSHI_RECENCY_DAYS", 14))
+from shared.config import load_config, component_config, run_cache, artifact_path
 
-LOGS_DIR            = str(REPO / "logs")
-CURRENT_RUN_POINTER = str(REPO / "logs" / ".current_run")
+CONFIG = load_config()
+RECENCY_DAYS = CONFIG["recency_days"]
+LOGS_DIR = CONFIG["log_dir"]
+CURRENT_RUN_POINTER = str(Path(LOGS_DIR) / ".current_run")
+_run_cache = run_cache
 
-
-def _run_cache() -> Path:
-    """Return the active run's cache directory.
-    Priority: KALSHI_CACHE_DIR env var → logs/.current_run → REPO/cache (legacy fallback).
-    """
-    if "KALSHI_CACHE_DIR" in os.environ:
-        return Path(os.environ["KALSHI_CACHE_DIR"])
-    crfile = REPO / "logs" / ".current_run"
-    if crfile.exists():
-        run_dir = crfile.read_text().strip()
-        run_path = REPO / "logs" / run_dir
-        if run_path.is_dir():
-            return run_path
-    return REPO / "cache"
-
-
-# Persistent market-data caches — always live in REPO/cache, never in run folder
-SCANNER_CONFIG = {
-    "price_threshold": 85,
-    "deep_scan_threshold": 80,
-    "spread_max": 3,
-    "min_volume": 50,
-    "deep_spread_min_volume": 200,
-    "price_change_threshold": 3,
-    "candidates_file": str(REPO / "cache" / "candidates.json"),        # updated in _init_run
-    "cache_file": str(REPO / "cache" / "market_cache.json"),
-}
-
-ANOMALY_CONFIG = {
-    "min_price": 20,
-    "max_price": 79,
-    "min_implied_hc_dollars": 10000,
-    "min_volume": 500,
-    "min_hc_ratio": 1.5,
-    "candidates_file": str(REPO / "cache" / "anomaly_candidates.json"), # updated in _init_run
-    "cache_file": str(REPO / "cache" / "anomaly_cache.json"),
-}
-
-PM_SCANNER_CONFIG = {
-    "price_threshold":        85,
-    "deep_scan_threshold":    80,
-    "spread_max":             5,
-    "min_volume":             1000,
-    "anomaly_min_price":      20,
-    "anomaly_max_price":      79,
-    "min_implied_hc_dollars": 10000,
-    "candidates_file":        str(REPO / "cache" / "pm_candidates.json"), # updated in _init_run
-    "cache_file":             str(REPO / "cache" / "pm_cache.json"),
-}
+# Resolve persistent caches before _init_run selects the active artifact folder.
+SCANNER_CONFIG = component_config("scanner")
+ANOMALY_CONFIG = component_config("anomaly")
+PM_SCANNER_CONFIG = component_config("polymarket")
+OPPORTUNITY_CONFIG = component_config("opportunity")
 
 _CANDIDATES_MAP = {
     "k-anomaly":      "anomaly_candidates.json",
@@ -177,7 +136,7 @@ def make_classified_entry(candidate: dict, classification: dict) -> dict:
 
 def _clean_cache():
     """Remove stale run artifacts from REPO/cache (the legacy shared cache)."""
-    legacy = str(REPO / "cache")
+    legacy = CONFIG["cache_dir"]
     if not os.path.isdir(legacy):
         return
     deleted = []
@@ -211,7 +170,7 @@ def _init_run(mode):
 
     with open(CURRENT_RUN_POINTER, "w") as f:
         f.write(run_dir)
-    print(f"[pythia-main] Run folder: logs/{run_dir}/")
+    print(f"[pythia-main] Run folder: {LOGS_DIR}/{run_dir}/")
     return run_path, run_dir
 
 
@@ -305,9 +264,9 @@ def _archive_run(excel_path, run_path, run_dir, cache_dir: Path = None):
     if excel_path != excel_in_run and os.path.exists(excel_path):
         shutil.move(excel_path, excel_in_run)
     if already_in_run:
-        print(f"[pythia-main] Archived run → logs/{run_dir}/  (artifacts already in run folder + Excel)")
+        print(f"[pythia-main] Archived run → {LOGS_DIR}/{run_dir}/  (artifacts already in run folder + Excel)")
     else:
-        print(f"[pythia-main] Archived run → logs/{run_dir}/  ({copied} cache artifacts + Excel)")
+        print(f"[pythia-main] Archived run → {LOGS_DIR}/{run_dir}/  ({copied} cache artifacts + Excel)")
     return run_dir
 
 
@@ -320,7 +279,7 @@ def finalize():
 
     # Snapshot cache dir now — _init_run() (called below as fallback) may change KALSHI_CACHE_DIR
     _cache_dir = _run_cache()
-    classified_path = str(_cache_dir / "classified.json")
+    classified_path = str(artifact_path("classified_file"))
     if not os.path.exists(classified_path):
         log.error("No classified.json found at %s. Classification step must run first.", classified_path)
         print("[pythia-main] No classified.json found. Classification step must run first.")
@@ -389,7 +348,7 @@ def finalize():
     from step_5_finalize.excel_reporter import export_excel
 
     try:
-        mgr = OpportunityManager()
+        mgr = OpportunityManager(OPPORTUNITY_CONFIG)
         to_notify, to_log = mgr.process(classified)
     except Exception as e:
         log.error("OpportunityManager failed: %s", e)
@@ -456,7 +415,7 @@ def finalize():
             }
             run_log.step_finalize(
                 n_entries=len(classified),
-                report_path=f"logs/{run_dir}/{excel_basename}",
+                report_path=f"{LOGS_DIR}/{run_dir}/{excel_basename}",
                 routing_summary=routing_summary,
                 errors=[],
             )
@@ -469,7 +428,7 @@ def finalize():
         pass
 
     log.info("Report saved → logs/%s/", run_dir)
-    print(f"\n[pythia-main] Run complete → logs/{run_dir}/")
+    print(f"\n[pythia-main] Run complete → {LOGS_DIR}/{run_dir}/")
 
 
 # ── Batch writing ─────────────────────────────────────────────────────────────
@@ -511,7 +470,7 @@ def _instruct_agent(mode: str, candidates: list, run_dir: str, batches: list, mo
     steps_label = "3-5" if is_anomaly else "2-5"
     print(f"""
 {sep}
-SCAN COMPLETE — {n} candidates | mode: {mode} | run: logs/{run_dir}/
+SCAN COMPLETE — {n} candidates | mode: {mode} | run: {LOGS_DIR}/{run_dir}/
 {sep}
 
 Step 1 (scan) is done.
@@ -568,24 +527,24 @@ Output schema — each entry must be the original candidate dict with one new ke
 Batches:""")
 
         for i, count, path in batches:
-            rel = path.relative_to(REPO)
+            rel = os.path.relpath(path, REPO)
             print(f"  Batch {i + 1}/{len(batches)}: {count} candidates -> {rel}")
 
         print(f"""
-NOTE: Batch files are written directly to logs/{run_dir}/ — no separate copy needed.
+NOTE: Batch files are written directly to {LOGS_DIR}/{run_dir}/ — no separate copy needed.
 
 After EACH batch completes, run these three commands IN ORDER:
 
   1. Health check — detect search failures vs genuine empty results:
-       python3 step_2_research/check_research.py logs/{run_dir}/research_batch<N>.json
+       python3 step_2_research/check_research.py {LOGS_DIR}/{run_dir}/research_batch<N>.json
      This writes search_status: ok|empty|search_failed to each entry and
-     appends failed entries to logs/{run_dir}/research_retry.json.
+     appends failed entries to {LOGS_DIR}/{run_dir}/research_retry.json.
 
   2. Filter — prune low-quality findings:
        from pathlib import Path
        from step_2_research.research_utils import filter_research_batch
        import json
-       batch_path = Path('logs/{run_dir}/research_batch<N>.json')
+       batch_path = Path('{LOGS_DIR}/{run_dir}/research_batch<N>.json')
        data = json.loads(batch_path.read_text())
        market_info = {{e["ticker"]: {{"title": e.get("title",""), "rules": e.get("rules_primary","")}} for e in data}}
        filtered = filter_research_batch(data, market_info)
@@ -609,14 +568,14 @@ After ALL batches finish, run:
   python3 -c "from shared.pipeline_run_log import RunLog; log = RunLog.for_current_run(); log and log.step_research_complete()"
 
 {sep}
-STEP 2.5 — RETRY FAILED SEARCHES  (skip if logs/{run_dir}/research_retry.json absent or empty)
+STEP 2.5 — RETRY FAILED SEARCHES  (skip if {LOGS_DIR}/{run_dir}/research_retry.json absent or empty)
 {sep}
 
   python3 -c "
   import json
   from pathlib import Path
-  p = Path('logs/{run_dir}/research_retry.json')
-  cp = Path('logs/{run_dir}/research_retry_chunks.json')
+  p = Path('{LOGS_DIR}/{run_dir}/research_retry.json')
+  cp = Path('{LOGS_DIR}/{run_dir}/research_retry_chunks.json')
   q = json.loads(p.read_text()) if p.exists() else []
   chunks = json.loads(cp.read_text()) if cp.exists() else []
   print(f'Retry queue: {{len(q)}} entries in {{len(chunks)}} chunk(s)')
@@ -624,7 +583,7 @@ STEP 2.5 — RETRY FAILED SEARCHES  (skip if logs/{run_dir}/research_retry.json 
       print(f'  Chunk {{i}}: {{len(chunk)}} entries')
   "
 
-If retry queue is non-empty, read logs/{run_dir}/research_retry_chunks.json.
+If retry queue is non-empty, read {LOGS_DIR}/{run_dir}/research_retry_chunks.json.
 Spawn ONE subagent per chunk, SEQUENTIALLY (wait for each before starting the next).
 Each chunk subagent must follow this protocol EXACTLY:
 
@@ -664,15 +623,15 @@ Each chunk subagent must follow this protocol EXACTLY:
 
   ── AFTER EACH CHUNK ──
 
-  Update the original batch file (logs/{run_dir}/research_batch<N>.json) in-place.
+  Update the original batch file ({LOGS_DIR}/{run_dir}/research_batch<N>.json) in-place.
   Run health check on each updated batch:
-    python3 step_2_research/check_research.py logs/{run_dir}/research_batch<N>.json
+    python3 step_2_research/check_research.py {LOGS_DIR}/{run_dir}/research_batch<N>.json
 
 After ALL chunks complete (or are skipped), clean up:
   python3 -c "
   from pathlib import Path
-  Path('logs/{run_dir}/research_retry.json').unlink(missing_ok=True)
-  Path('logs/{run_dir}/research_retry_chunks.json').unlink(missing_ok=True)
+  Path('{LOGS_DIR}/{run_dir}/research_retry.json').unlink(missing_ok=True)
+  Path('{LOGS_DIR}/{run_dir}/research_retry_chunks.json').unlink(missing_ok=True)
   print('Retry queue cleared')
   "
 
@@ -700,7 +659,7 @@ This routes each anomaly candidate through Classifier._classify_anomaly():
   1. Score via anomaly_scorer.score_anomaly() → STRONG / WATCH / SKIP
   2. SKIP candidates: returned immediately, no API call
   3. WATCH/STRONG: veto LLM searches for public explanations; discounts score if found
-Results saved to logs/{run_dir}/classified.json
+Results saved to {LOGS_DIR}/{run_dir}/classified.json
 
 The veto LLM requires OPENROUTER_API_KEY or ANTHROPIC_API_KEY (reads from env or .env).
 If no key is available, WATCH/STRONG candidates will fail the veto step — set the key first.
@@ -722,7 +681,7 @@ After ALL research batches and retries are complete:
   for ~150 candidates. Wait for it to complete before proceeding to Step 4.
 
   Results saved to:
-    logs/{run_dir}/classified.json  (KALSHI_CACHE_DIR is set to this folder)
+    {LOGS_DIR}/{run_dir}/classified.json  (KALSHI_CACHE_DIR is set to this folder)
 """)
     else:
         print(f"""
@@ -762,13 +721,13 @@ After ALL research batches and retries are complete:
   Collect all results into a list in this format:
        {{"candidate": <original candidate dict>, "classification": <validated classification dict>}}
   Save to:
-       logs/{run_dir}/classified.json  (KALSHI_CACHE_DIR is set to this folder)
+       {LOGS_DIR}/{run_dir}/classified.json  (KALSHI_CACHE_DIR is set to this folder)
 
   Then write the classification summary to the run log:
     python3 -c "
     from shared.pipeline_run_log import RunLog
     import json
-    results = json.loads(open('logs/{run_dir}/classified.json').read())
+    results = json.loads(open('{LOGS_DIR}/{run_dir}/classified.json').read())
     counts = {{'CERTAIN': 0, 'LIKELY': 0, 'UNCLEAR': 0}}
     n_failed, n_empty, issues = 0, 0, []
     for r in results:
@@ -831,7 +790,7 @@ Run after verification:
 
   python3 pythia-main finalize
 
-Archives cache artifacts to logs/{run_dir}/ and exports the Excel report.
+Archives cache artifacts to {LOGS_DIR}/{run_dir}/ and exports the Excel report.
 Pipeline complete when finalize exits 0.
 {sep}
 """)
@@ -921,7 +880,7 @@ def main() -> None:
         scan_duration = 0.0
         print(f"[pythia-main] Generated {len(candidates)} dummy candidates (dry run)")
         batches = _write_batches(candidates)
-        print(f"[pythia-main] Wrote {len(batches)} batch file(s) to logs/{run_dir}/")
+        print(f"[pythia-main] Wrote {len(batches)} batch file(s) to {LOGS_DIR}/{run_dir}/")
         print(f"[pythia-main] Dry run — instructions follow below. Run without --dry-run to execute.")
         _instruct_agent(mode, candidates, run_dir, batches, model_override)
         return
@@ -960,7 +919,7 @@ def main() -> None:
     # Pre-write batch files so subagents have input ready (not needed for anomaly — scorer, not research)
     if "anomaly" not in mode:
         batches = _write_batches(candidates)
-        print(f"[pythia-main] Wrote {len(batches)} batch file(s) to logs/{run_dir}/")
+        print(f"[pythia-main] Wrote {len(batches)} batch file(s) to {LOGS_DIR}/{run_dir}/")
     else:
         batches = []
 
@@ -971,7 +930,7 @@ def main() -> None:
         if run_log:
             run_log.write_header(mode, run_dir)
             run_log.step_scan(mode, len(candidates), scan_duration, batches, Path(cand_file).name)
-            print(f"[pythia-main] Run log: logs/{run_dir}/pipeline_run.md")
+            print(f"[pythia-main] Run log: {LOGS_DIR}/{run_dir}/pipeline_run.md")
     except Exception as e:
         print(f"[pythia-main] WARNING: could not write run log: {e}")
 

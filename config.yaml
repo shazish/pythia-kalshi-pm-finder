@@ -13,6 +13,7 @@ recency_days: 14                   # Freshness window for the mandatory recency 
                                    # Override: KALSHI_RECENCY_DAYS env var
 
 # ── Opportunity Manager ─────────────────────────────────────────
+min_edge_annualized: 0.15
 min_edge_after_fees: 0.03          # Minimum edge after fees to send notification (3%)
 max_bankroll_pct: 0.05             # Max 5% of bankroll per opportunity
 default_bankroll: 1000.0           # Default bankroll in dollars
@@ -24,11 +25,17 @@ backtest_sample_size: 50           # Minimum markets to evaluate
 backtest_min_precision: 0.95       # Minimum acceptable precision for CERTAIN
 
 # ── Paths ───────────────────────────────────────────────────────
-cache_dir: ~/.hermes/kalshi-tracker/cache
-log_dir: ~/.hermes/kalshi-tracker/logs
-backtest_dir: ~/.hermes/kalshi-tracker/backtests
-cache_file: ~/.hermes/kalshi-tracker/cache/market_cache.json
-candidates_file: ~/.hermes/kalshi-tracker/cache/candidates.json
-classified_file: ~/.hermes/kalshi-tracker/cache/classified.json
-dashboard_log: ~/.hermes/kalshi-tracker/logs/opportunities.jsonl
-notified_cache: ~/.hermes/kalshi-tracker/cache/notified.json
+cache_dir: cache
+log_dir: logs
+backtest_dir: backtests
+cache_file: cache/market_cache.json
+candidates_file: cache/candidates.json
+classified_file: cache/classified.json
+dashboard_log: logs/opportunities.jsonl
+notified_cache: cache/notified.json
+
+# Platform-specific scanner settings (KALSHI_PM_* / KALSHI_ANOMALY_*)
+pm_spread_max: 5
+pm_min_volume: 1000
+anomaly_min_volume: 500
+anomaly_min_hc_ratio: 1.5

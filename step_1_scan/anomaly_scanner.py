@@ -20,23 +20,12 @@ from datetime import datetime, timedelta, timezone
 
 from shared.kalshi_client import KalshiClient
 
-DEFAULT_CONFIG = {
-    "min_price": 20,                      # ignore markets below 20c (too speculative)
-    "max_price": 79,                      # don't duplicate ScannerAgent (80c+ is its job)
-    "min_implied_hc_dollars": 10000,      # $10k+ on high-confidence side to qualify
-    "min_volume": 500,                    # raw volume floor
-    "max_spread": 10,                     # wider spread allowed than primary scanner
-    "max_pages": 20,
-    "min_hc_ratio": 1.0,               # minimum HC-to-opposite implied dollar ratio; overridden to 1.5 in pythia-main
-    "scan_categories": ["Politics", "Economics", "Entertainment", "Weather", "World", "Elections", "Health", "Finance"],
-    "cache_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/anomaly_cache.json"),
-    "candidates_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/anomaly_candidates.json"),
-}
+from shared.config import ANOMALY_DEFAULTS as DEFAULT_CONFIG, component_config
 
 
 class AnomalyScanner:
     def __init__(self, config=None):
-        self.config = {**DEFAULT_CONFIG, **(config or {})}
+        self.config = component_config("anomaly", config)
         self.client = KalshiClient()
         self.cache = self._load_cache()
 

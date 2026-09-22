@@ -13,18 +13,12 @@ import argparse, json, os, sys
 
 SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SKILL_DIR)
+from shared.config import load_config
 
 
 def cmd_scan(args):
     from step_1_scan.scanner import ScannerAgent
-    cfg = {
-        "price_threshold": 85, "deep_scan_threshold": 80,
-        "spread_max": 3, "min_volume": 50,
-        "candidates_file": os.path.join(SKILL_DIR, "cache", "candidates.json"),
-        "cache_file": os.path.join(SKILL_DIR, "cache", "market_cache.json"),
-        "scan_categories": ["Politics", "Economics", "Entertainment", "Weather", "World", "Elections"],
-    }
-    scanner = ScannerAgent(cfg)
+    scanner = ScannerAgent()
     if args.mode == "k-deep":
         candidates = scanner.deep_scan()
     elif args.mode == "k-full":
@@ -33,7 +27,8 @@ def cmd_scan(args):
         candidates = scanner.incremental_scan()
     elif args.mode == "k-anomaly":
         from step_1_scan.anomaly_scanner import AnomalyScanner
-        ascanner = AnomalyScanner({"candidates_file": os.path.join(SKILL_DIR, "cache", "anomaly_candidates.json")})
+        ascanner = AnomalyScanner()
+        scanner = ascanner
         candidates = ascanner.scan()
     else:
         candidates = scanner.deep_scan()
@@ -44,13 +39,7 @@ def cmd_scan(args):
 
 def cmd_pm_scan(args):
     from step_1_scan.polymarket_scanner import PolymarketScanner
-    cfg = {
-        "price_threshold": 85, "deep_scan_threshold": 80,
-        "spread_max": 5, "min_volume": 1000,
-        "candidates_file": os.path.join(SKILL_DIR, "cache", "pm_candidates.json"),
-        "cache_file": os.path.join(SKILL_DIR, "cache", "pm_cache.json"),
-    }
-    scanner = PolymarketScanner(cfg)
+    scanner = PolymarketScanner()
     mode = args.mode.replace("pm-", "") if args.mode.startswith("pm-") else args.mode
     if mode == "deep" or mode == "full":
         candidates = scanner.full_scan() if mode == "full" else scanner.deep_scan()
@@ -82,7 +71,8 @@ def cmd_finalize(args):
     from collections import Counter
     from step_3_classification.classifier import validate_classification
 
-    classified_file = os.path.join(SKILL_DIR, "cache", "classified.json")
+    cfg = load_config()
+    classified_file = cfg["classified_file"]
     if not os.path.exists(classified_file):
         print("No classified.json found. Run classification first.")
         sys.exit(1)
@@ -118,7 +108,7 @@ def cmd_finalize(args):
     mode = mode_counts.most_common(1)[0][0] if mode_counts else "unknown"
 
     ts = datetime.now().strftime("%Y%m%d_%H%M")
-    xlsx = os.path.join(SKILL_DIR, "logs", f"kalshi_{mode}_{ts}.xlsx")
+    xlsx = os.path.join(cfg["log_dir"], f"kalshi_{mode}_{ts}.xlsx")
     result = export_excel(to_notify, to_log, xlsx)
     print(f"\nReport: {result}")
 
@@ -126,7 +116,7 @@ def cmd_finalize(args):
 def cmd_backtest(args):
     from backtesting.backtest_agent import BacktestAgent
     agent = BacktestAgent()
-    settled = agent.fetch_settled_markets(limit=50)
+    settled = agent.fetch_settled_markets()
     candidates = agent.prepare_backtest_candidates(settled)
     print(f"Prepared {len(candidates)} backtest candidates")
     print("Run the classifier on these candidates, then call evaluate_results()")

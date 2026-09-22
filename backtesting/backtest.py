@@ -28,9 +28,11 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOG_FILE = os.path.join(SKILL_DIR, "logs", "opportunities.jsonl")
-CACHE_FILE = os.path.join(SKILL_DIR, "backtests", "resolution_cache.json")
-RESULTS_DIR = os.path.join(SKILL_DIR, "backtests")
+from shared.config import load_config
+CONFIG = load_config()
+LOG_FILE = CONFIG["dashboard_log"]
+CACHE_FILE = os.path.join(CONFIG["backtest_dir"], "resolution_cache.json")
+RESULTS_DIR = CONFIG["backtest_dir"]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -9,6 +9,8 @@ Regular candidates: classified by LLM → CERTAIN / LIKELY / UNCLEAR
 Anomaly candidates: scored by anomaly_scorer (quantitative) → STRONG / WATCH / SKIP.
   LLM runs only as a veto noise-filter for WATCH/STRONG candidates, not as primary classifier.
 """
+
+from shared.config import load_config
 import os
 import re
 
@@ -101,8 +103,10 @@ _METRIC_PATTERNS = [
 
 # ── System prompt builders ────────────────────────────────────────────────────
 
-def get_classifier_system_prompt(recency_days: int = 14, platform: str = "Kalshi") -> str:
+def get_classifier_system_prompt(recency_days: int = None, platform: str = "Kalshi") -> str:
     """Return the regular classifier system prompt with the given recency window."""
+    if recency_days is None:
+        recency_days = load_config()["recency_days"]
     return f"""You are a {platform} market classifier. Your job is to determine whether a binary outcome on {platform} is an almost-certainty (CERTAIN), genuinely uncertain (LIKELY), or impossible to determine (UNCLEAR).
 
 CRITICAL RULES:
@@ -186,8 +190,10 @@ If any validation fails, the market will be downgraded to LIKELY."""
 CLASSIFIER_SYSTEM_PROMPT = get_classifier_system_prompt()
 
 
-def get_anomaly_classifier_system_prompt(recency_days: int = 14, platform: str = "Kalshi") -> str:
+def get_anomaly_classifier_system_prompt(recency_days: int = None, platform: str = "Kalshi") -> str:
     """Return the anomaly classifier system prompt with the given recency window."""
+    if recency_days is None:
+        recency_days = load_config()["recency_days"]
     return f"""You are a {platform} market analyst specialising in detecting mispricings via volume signals.
 
 A market has been flagged because it has unusually large capital deployed on the high-confidence side despite its price being well below the typical certainty threshold. Your job is NOT to ask "is this outcome obvious?" — the market is saying it isn't obvious yet. Your job is to ask: "Is the market WRONG? Is the smart money right?"
@@ -291,8 +297,10 @@ or
 veto_confidence must be 0 when vetoed=false, and 70-100 when vetoed=true."""
 
 
-def build_anomaly_veto_prompt(candidate: dict, recency_days: int = 14) -> str:
+def build_anomaly_veto_prompt(candidate: dict, recency_days: int = None) -> str:
     """Build the veto-check prompt for an anomaly candidate."""
+    if recency_days is None:
+        recency_days = load_config()["recency_days"]
     evidence = candidate.get("anomaly_evidence", {})
     side     = candidate.get("high_confidence_side", "YES")
     prob     = candidate.get("implied_probability", 0)
@@ -374,11 +382,13 @@ def extract_settlement_metric(rules: str) -> str:
     return ""
 
 
-def build_regular_prompt(candidate, recency_days: int = 14):
+def build_regular_prompt(candidate, recency_days: int = None):
     """
     Build the classifier prompt for a price-filter candidate (ScannerAgent output).
     Question: is this already-high-priced outcome actually near-certain?
     """
+    if recency_days is None:
+        recency_days = load_config()["recency_days"]
     side = candidate["high_confidence_side"]
     prob = candidate["implied_probability"]
 
@@ -454,11 +464,13 @@ Instructions:
 8. Output the structured JSON as specified."""
 
 
-def build_anomaly_prompt(candidate, recency_days: int = 14):
+def build_anomaly_prompt(candidate, recency_days: int = None):
     """
     Build the classifier prompt for a volume-anomaly candidate (AnomalyScanner output).
     Question: is the smart money accumulation a genuine mispricing signal?
     """
+    if recency_days is None:
+        recency_days = load_config()["recency_days"]
     side = candidate["high_confidence_side"]
     prob = candidate["implied_probability"]
     evidence = candidate.get("anomaly_evidence", {})
@@ -678,7 +690,7 @@ class Classifier:
 
     # ── Public ────────────────────────────────────────────────────────────────
 
-    def classify(self, candidate: dict, research: dict = None, recency_days: int = 14) -> dict:
+    def classify(self, candidate: dict, research: dict = None, recency_days: int = None) -> dict:
         """
         Classify one candidate. Returns a validated classification dict.
 
@@ -688,6 +700,8 @@ class Classifier:
                           web-search instructions are replaced with pre-conducted findings.
             recency_days: window for the mandatory recency search instruction.
         """
+        if recency_days is None:
+            recency_days = load_config()["recency_days"]
         is_anomaly = (
             "anomaly" in candidate.get("candidate_type", "")
             or "anomaly_evidence" in candidate
