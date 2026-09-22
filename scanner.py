@@ -605,6 +605,7 @@ class ScannerAgent:
             "volume_anomaly": self._detect_volume_anomaly(market, side),
             "urgency_score": self._compute_urgency_score(days_to_close, implied_prob, volume),
             "scan_type": scan_type,
+            "market_data_at": market.get("market_data_at"),
             "scanned_at": datetime.now(timezone.utc).isoformat(),
         }
 

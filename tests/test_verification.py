@@ -27,7 +27,9 @@ class VerificationTests(unittest.TestCase):
         self.entry = {
             "candidate": {"ticker": "TEST", "title": "Final result exceeds 40?",
                           "rules_primary": "Final result for the specified reporting period exceeds 40 units.",
-                          "yes_ask": 70, "implied_probability": 70, "days_to_close": 10},
+                          "yes_ask": 70, "implied_probability": 70, "days_to_close": 10,
+                          "status": "active", "market_data_at": now(),
+                          "close_date": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()},
             "classification": {"classification": "CERTAIN", "high_confidence_side": "YES",
                                "confidence_score": 98, "_valid": True,
                                "confirming_signals": [{"fact": "Final result is 42 units.", "source_url": URL}]}}

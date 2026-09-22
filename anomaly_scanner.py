@@ -261,6 +261,7 @@ class AnomalyScanner:
             "volume_anomaly": None,  # not applicable — opposite signal type
             "candidate_type": "anomaly",
             "scan_type": "anomaly_scan",
+            "market_data_at": market.get("market_data_at"),
             "scanned_at": datetime.now(timezone.utc).isoformat(),
         }
 

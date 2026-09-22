@@ -230,6 +230,7 @@ class PolymarketScanner:
             "urgency_score":        urgency_score,
             "candidate_type":       "polymarket",
             "scan_type":            scan_type,
+            "market_data_at": market.get("market_data_at"),
             "scanned_at":           datetime.now(timezone.utc).isoformat(),
         }
 

@@ -5,6 +5,8 @@ No authentication required. Prices are returned as decimal strings (e.g. "0.87")
 normalize_market() converts everything to the same format KalshiClient produces
 so the scanner, classifier, and opportunity manager work unchanged.
 """
+from market_freshness import stamp_response
+import math
 import time
 import json
 import urllib.request
@@ -58,7 +60,7 @@ class PolymarketClient:
         try:
             with urllib.request.urlopen(req, timeout=15) as resp:
                 self._last_request = time.time()
-                return json.loads(resp.read().decode())
+                return stamp_response(json.loads(resp.read().decode()))
         except Exception as e:
             self._last_request = time.time()
             raise RuntimeError(f"Polymarket API error {endpoint}: {e}") from e
@@ -85,6 +87,17 @@ class PolymarketClient:
         markets = data.get("data", data.get("markets", []))
         next_cursor = data.get("next_cursor") or data.get("cursor")
         return markets, next_cursor
+
+    def get_market(self, ticker):
+        """Fetch one market, retaining only real bid/ask quotes for finalization."""
+        market_id = ticker.removeprefix("PM-")
+        if not market_id.isdigit():
+            raise ValueError("Invalid Polymarket ID")
+        raw = self._get(f"/markets/{market_id}")
+        market = self.normalize_market(raw)
+        if raw.get("acceptingOrders") is not True or raw.get("enableOrderBook") is not True:
+            market["status"] = "inactive"
+        return market
 
     def normalize_market(self, raw: dict, event: dict | None = None) -> dict:
         """
@@ -116,6 +129,16 @@ class PolymarketClient:
         except (ValueError, TypeError):
             yes_bid = yes_ask = yes_mid * 100
 
+        # Missing or malformed executable quotes must not become midpoint asks.
+        def quote_cents(value):
+            try:
+                price = float(value) * 100
+                return price if math.isfinite(price) and 0 < price < 100 else None
+            except (ValueError, TypeError):
+                return None
+        ask_quote = quote_cents(best_ask)
+        bid_quote = quote_cents(best_bid)
+
         no_bid  = (1 - yes_ask / 100) * 100
         no_ask  = (1 - yes_bid / 100) * 100
 
@@ -142,6 +165,7 @@ class PolymarketClient:
         market_url = f"https://polymarket.com/event/{url_slug}" if url_slug else ""
 
         return {
+            "market_data_at":       raw.get("_market_data_at"),
             "ticker":               f"PM-{raw.get('id', '')}",
             "title":                raw.get("question") or raw.get("title") or "",
             "subtitle":             "",
@@ -149,9 +173,9 @@ class PolymarketClient:
             "series_ticker":        "",
             "category":             category,
             "yes_bid":              round(yes_bid, 1),
-            "yes_ask":              round(yes_ask, 1),
+            "yes_ask":              round(ask_quote, 1) if ask_quote is not None else None,
             "no_bid":               round(no_bid, 1),
-            "no_ask":               round(no_ask, 1),
+            "no_ask":               round(100 - bid_quote, 1) if bid_quote is not None else None,
             "volume":               round(volume, 2),
             "open_interest":        round(liquidity, 2),
             "status":               "open" if raw.get("active") and not raw.get("closed") else "closed",

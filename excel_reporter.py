@@ -119,7 +119,7 @@ OPPORTUNITY_COLS = [
     ("Title",                  45, lambda r: r["candidate"].get("title", "")),
     ("Category",               14, lambda r: r["candidate"].get("category", "")),
     ("Side",                    6, lambda r: r["classification"].get("high_confidence_side", "")),
-    ("Bid Price (c)",          12, lambda r: int(r["candidate"].get("implied_probability", 0) or 0)),
+    ("Bid Price (c)",          12, lambda r: int(r.get("market_snapshot", r["candidate"]).get("implied_probability", 0) or 0)),
     ("Ask Price (c)",          12, lambda r: round((r.get("exec_price") or 0) * 100)),
     ("Confidence %",           13, lambda r: r["classification"].get("signal_score", r["classification"].get("confidence_score", "")) if r.get("candidate", {}).get("candidate_type") == "anomaly" else r["classification"].get("confidence_score", "")),
     ("Classification",         14, lambda r: r["classification"].get("tier", r["classification"].get("classification", "")) if r.get("candidate", {}).get("candidate_type") == "anomaly" else r["classification"].get("classification", "")),
@@ -131,7 +131,7 @@ OPPORTUNITY_COLS = [
     ("Fee Rate",               10, lambda r: _pct(r.get("fee_rate_used"))),
     ("Days to Close",          13, lambda r: r.get("days_to_close", "")),
     ("Urgency Score",          13, lambda r: r["candidate"].get("urgency_score", "")),
-    ("Close Date",             12, lambda r: _date(r["candidate"].get("close_date", ""))),
+    ("Close Date",             12, lambda r: _date(r.get("market_snapshot", r["candidate"]).get("close_date", ""))),
     ("Suggested Size ($)",     16, lambda r: r.get("position_size_usd", "")),
     ("Volume",                 12, lambda r: int(r["candidate"].get("volume", 0) or 0)),
     ("Volume Anomaly",         22, lambda r: _anomaly_str(r["candidate"].get("volume_anomaly"))),
@@ -144,6 +144,14 @@ OPPORTUNITY_COLS = [
     ("Routing",                18, lambda r: r.get("routing", "")),
     ("Scan Type",              14, lambda r: r["candidate"].get("scan_type", "")),
     ("Scanned At",             20, lambda r: _date(r["candidate"].get("scanned_at", ""))),
+]
+
+OPPORTUNITY_COLS += [
+    ("Market Data At (UTC)", 30, lambda r: r.get("market_data_at") or r["candidate"].get("market_data_at") or ""),
+    ("Scan Market Data At (UTC)", 30, lambda r: r["candidate"].get("market_data_at") or ""),
+    ("Market Refreshed", 18, lambda r: r.get("market_refreshed", False)),
+    ("Scan YES Ask (c)", 18, lambda r: r["candidate"].get("yes_ask", "")),
+    ("Scan NO Ask (c)", 18, lambda r: r["candidate"].get("no_ask", "")),
 ]
 
 ALL_RESULTS_COLS = OPPORTUNITY_COLS  # same columns, more rows

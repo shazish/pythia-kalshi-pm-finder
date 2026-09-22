@@ -10,6 +10,7 @@ API response notes:
 - Status values: "active", "settled", "closed".
 - Cursor-based pagination with "cursor" field.
 """
+from market_freshness import stamp_response
 import requests
 import time
 import os
@@ -63,7 +64,7 @@ class KalshiClient:
                 continue
             if resp.status_code != 200:
                 raise Exception(f"Kalshi API error {resp.status_code}: {resp.text[:500]}")
-            return resp.json()
+            return stamp_response(resp.json())
         raise Exception(f"Max retries exceeded for {url}")
 
     def _paginate(self, path, params=None, limit=100):
@@ -122,6 +123,7 @@ class KalshiClient:
         Adds: yes_bid, yes_ask, no_bid, no_ask (in cents), volume, open_interest
         """
         return {
+            "market_data_at": market.get("_market_data_at"),
             "ticker": market.get("ticker", ""),
             "title": market.get("title", ""),
             "subtitle": market.get("subtitle", ""),

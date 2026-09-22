@@ -9,6 +9,7 @@ import json
 import os
 from datetime import datetime, timezone
 from verification import verification_passes
+from market_freshness import MarketFreshness
 
 DEFAULT_CONFIG = {
     "min_edge_after_fees": 0.03,     # 3% minimum edge to notify (baseline for 30-day market)
@@ -31,14 +32,18 @@ DEFAULT_CONFIG = {
     },
     "dashboard_log": os.path.expanduser("~/.hermes/kalshi-tracker/logs/opportunities.jsonl"),
     "notified_cache": os.path.expanduser("~/.hermes/kalshi-tracker/cache/notified.json"),
+    "max_market_age_seconds": 300,  # refresh quotes older than five minutes
     "notify_ttl_hours": 168,         # 7 days before re-notifying same market
 }
 
 
 class OpportunityManager:
-    def __init__(self, config=None):
+    def __init__(self, config=None, market_fetcher=None):
         self.config = {**DEFAULT_CONFIG, **(config or {})}
         self.notified = self._load_notified()
+        max_age = (config or {}).get("max_market_age_seconds",
+            os.environ.get("KALSHI_MAX_MARKET_AGE_SECONDS", self.config["max_market_age_seconds"]))
+        self.market_freshness = MarketFreshness(max_age, market_fetcher)
 
     # ── Notified cache (deduplication) ─────────────────────────────
 
@@ -160,14 +165,14 @@ class OpportunityManager:
         return round(capped * self.config["default_bankroll"], 2)
 
     def compute_days_to_close(self, candidate):
-        """Return days until market closes, minimum 1."""
+        """Return zero for expired markets; otherwise days remaining, minimum one."""
         close_date = candidate.get("close_date", "")
         if not close_date:
             return None
         try:
             close_dt = datetime.fromisoformat(close_date.replace("Z", "+00:00"))
-            delta = (close_dt - datetime.now(timezone.utc)).days
-            return max(1, delta)
+            delta = close_dt - datetime.now(timezone.utc)
+            return max(1, delta.days) if delta.total_seconds() > 0 else 0
         except Exception:
             return None
 
@@ -231,8 +236,18 @@ class OpportunityManager:
                 skipped_validation += 1
                 continue
 
-            # Compute edge and sizing using taker ask price
-            edge = self.compute_edge(cm)
+            # Verify original evidence first; keep its candidate snapshot unchanged.
+            candidate, market_error, refreshed = self.market_freshness.check(candidate, side)
+            market_meta = {"market_snapshot": candidate,
+                           "market_data_at": candidate.get("market_data_at"),
+                           "market_refreshed": refreshed}
+            if market_error:
+                to_log.append({**cm, **market_meta, "routing": market_error,
+                               "logged_at": datetime.now(timezone.utc).isoformat()})
+                continue
+
+            # Compute edge and sizing from the current quote, preserving the verified input.
+            edge = self.compute_edge({**cm, "candidate": candidate})
             exec_price = self._exec_price(candidate, side)
             bid_price = candidate.get("implied_probability", 0) / 100.0  # for display only
             if is_strong_anomaly:
@@ -260,6 +275,7 @@ class OpportunityManager:
 
             opportunity = {
                 **cm,
+                **market_meta,
                 "edge_after_fees": round(edge, 4),
                 "annualized_edge": annualized_edge,
                 "days_to_close": days_to_close,
@@ -317,7 +333,7 @@ class OpportunityManager:
 
     def format_notification(self, opportunity):
         """Format an opportunity into a human-readable notification message."""
-        c = opportunity.get("candidate", {})
+        c = opportunity.get("market_snapshot", opportunity.get("candidate", {}))
         cl = opportunity.get("classification", {})
         side = cl.get("high_confidence_side", "?")
         bid_c = c.get("implied_probability", 0)
@@ -344,6 +360,7 @@ class OpportunityManager:
             f"Ticker: {c.get('ticker', 'N/A')}",
             f"Edge after fees: {edge_str}",
             f"Suggested size: ${size:.0f}",
+            f"Market data as of: {opportunity.get('market_data_at') or 'unknown'}",
             f"Close date: {c.get('close_date', 'N/A')} ({days}d)",
             f"Urgency score: {urgency:.0f}/100" if urgency is not None else "Urgency score: N/A",
             f"Confidence: {cl.get('confidence_score', 'N/A')}%",

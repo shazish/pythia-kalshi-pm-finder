@@ -134,3 +134,21 @@ An animated explainer video is included in `kalshi-video/deck.html` — open it 
 ## License
 
 MIT
+
+### Market freshness at finalization
+
+Finalization reuses eligible candidates' market data for up to five minutes.
+Set `KALSHI_MAX_MARKET_AGE_SECONDS` (default `300`, `0` forces a refresh), or pass
+`max_market_age_seconds` in `OpportunityManager` configuration, to change this limit.
+Quotes are timestamped when the API response is received, before scan enrichment.
+Missing, invalid, future, or expired fetch timestamps require a market-data refresh;
+legacy candidates without `market_data_at` are refreshed once when finalized.
+Only candidates passing classification and evidence gates reach this check.
+Closed or expired markets are excluded even when their quote is recent. Required
+refresh failures and incomplete quotes are logged as `skipped_market_unconfirmed`
+and cannot produce actionable recommendations. No LLM research is repeated.
+
+Reports show the market-data timestamp, whether a refresh occurred, and original
+scan asks. JSON results preserve the verified `candidate` and store the quote used
+for calculation in `market_snapshot`. Prices may still move within the freshness
+window or after finalization; this does not guarantee execution at the reported ask.
