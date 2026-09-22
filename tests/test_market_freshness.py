@@ -154,6 +154,18 @@ class FreshnessTests(unittest.TestCase):
             self.assertEqual(fields["Ask Price (c)"], 97)
             self.assertTrue(fields["Market Data At (UTC)"])
 
+    def test_report_uses_candidate_ask_before_edge_calculation(self):
+        from step_5_finalize.excel_reporter import OPPORTUNITY_COLS
+
+        entry = {"candidate": candidate(yes_ask=87, no_ask=14), "classification": {
+            "classification": "LIKELY", "high_confidence_side": "YES"}}
+        fields = {name: fn(entry) for name, _, fn in OPPORTUNITY_COLS}
+        self.assertEqual(fields["Ask Price (c)"], 87)
+
+        entry["classification"]["high_confidence_side"] = "NO"
+        fields = {name: fn(entry) for name, _, fn in OPPORTUNITY_COLS}
+        self.assertEqual(fields["Ask Price (c)"], 14)
+
 
 if __name__ == "__main__":
     unittest.main()

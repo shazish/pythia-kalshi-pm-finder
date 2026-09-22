@@ -112,6 +112,21 @@ def _ticker_cell(r):
     return ticker
 
 
+def _ask_price_cents(r):
+    """Return the execution ask, including rows routed before edge calculation."""
+    exec_price = r.get("exec_price")
+    if exec_price is not None:
+        return round(float(exec_price) * 100)
+
+    candidate = r.get("market_snapshot", r.get("candidate", {}))
+    classification = r.get("classification", {})
+    side = classification.get(
+        "high_confidence_side", candidate.get("high_confidence_side", "YES")
+    )
+    ask = candidate.get("yes_ask" if side == "YES" else "no_ask")
+    return round(float(ask)) if ask is not None else ""
+
+
 # ── Column definitions ───────────────────────────────────────────────────────
 
 OPPORTUNITY_COLS = [
@@ -120,7 +135,7 @@ OPPORTUNITY_COLS = [
     ("Category",               14, lambda r: r["candidate"].get("category", "")),
     ("Side",                    6, lambda r: r["classification"].get("high_confidence_side", "")),
     ("Bid Price (c)",          12, lambda r: int(r.get("market_snapshot", r["candidate"]).get("implied_probability", 0) or 0)),
-    ("Ask Price (c)",          12, lambda r: round((r.get("exec_price") or 0) * 100)),
+    ("Ask Price (c)",          12, _ask_price_cents),
     ("Confidence %",           13, lambda r: r["classification"].get("signal_score", r["classification"].get("confidence_score", "")) if r.get("candidate", {}).get("candidate_type") == "anomaly" else r["classification"].get("confidence_score", "")),
     ("Classification",         14, lambda r: r["classification"].get("tier", r["classification"].get("classification", "")) if r.get("candidate", {}).get("candidate_type") == "anomaly" else r["classification"].get("classification", "")),
     ("Signal Score",           13, lambda r: r["classification"].get("signal_score", "") if r.get("candidate", {}).get("candidate_type") == "anomaly" else ""),
