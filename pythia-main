@@ -814,11 +814,12 @@ STEP 4 — VERIFY
 
 Run after step 3.5:
 
-  python3 scripts/verify_classifications.py
+  python3 scripts/verify_classifications.py{"" if not model_override else f" --model {model_override}"}
 
-Captures cited sources and requires dated evidence reviews; see docs/verification.md.
+Captures cited sources and automatically reviews article/claim/settlement evidence.
+Uses the configured model and caches reviews; see docs/verification.md.
 Trusted domains never bypass claim and settlement support checks.
-If exit 1, inspect verification_report.json, review evidence, and rerun.
+If exit 1, inspect verification_report.json for missing evidence or model failures.
 Unverifiable or contradicted CERTAIN entries are withheld during finalization.
 Anomaly candidates (STRONG/WATCH/SKIP) keep their separate quantitative route.
 

@@ -35,7 +35,7 @@ Guards against common failure modes:
 - **Parallel run protection**: lockfile prevents two classification processes from overwriting each other
 
 ### Verifier
-Captures and caches cited pages, applies the configurable source policy, and requires an explicit evidence review for each CERTAIN claim. Records verified / contradicted / unverifiable separately from schema validation. Finalization withholds CERTAIN opportunities without current, matching verification. Trusted publishers do not bypass article-level support checks. See [the verification workflow](docs/verification.md); automated semantic review is deferred.
+Captures and caches cited pages, applies the configurable source policy, and automatically reviews article accessibility, credibility, claim support and settlement relevance for each CERTAIN claim. Records verified / contradicted / unverifiable separately from schema validation. Finalization withholds CERTAIN opportunities without current, matching verification. Trusted publishers do not bypass article-level support checks. See [the verification workflow](docs/verification.md). Model failures leave claims unverifiable.
 
 ### Opportunity Manager
 Computes expected edge after platform-specific fees (Kalshi: profit-based, Polymarket: volume-based). Applies Kelly criterion with 5% bankroll cap. Filters by dual threshold (raw edge ≥ 3% OR annualized edge ≥ 15%). Routes to notification or dashboard log.

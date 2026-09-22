@@ -1,4 +1,4 @@
-"""Evidence capture and fail-closed verification; no publisher or claim LLM calls."""
+"""Evidence capture and fail-closed verification; automated review is orchestrated separately."""
 import hashlib
 import ipaddress
 import json
@@ -252,6 +252,11 @@ def verify_entry(entry, research, policy, cache, reviews):
         review = reviews.get(review_id, {})
         if not isinstance(review, dict):
             review = {}
+        if (review.get("automatic_version") and review.get("verdict") == "unverifiable"
+                and fresh(review.get("reviewed_at"), policy["verification_ttl_hours"])):
+            check["review"] = review
+            check["reason"] = review.get("reason", "Automatic review could not establish support")
+            continue
         excerpt = normalize(review.get("excerpt", "")) if isinstance(review.get("excerpt"), str) else ""
         if (not review.get("reviewer") or not fresh(review.get("reviewed_at"), policy["verification_ttl_hours"])
                 or len(excerpt) < 20 or excerpt not in normalize(page["text"])):
