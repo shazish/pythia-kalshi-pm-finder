@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "trusted_domains": [
+    "economist.com",
+    "nytimes.com"
+  ],
+  "blocked_domains": [],
+  "resolution_domains_by_ticker": {},
+  "evidence_ttl_hours": 24,
+  "verification_ttl_hours": 24
+}

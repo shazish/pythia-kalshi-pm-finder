@@ -35,7 +35,7 @@ Guards against common failure modes:
 - **Parallel run protection**: lockfile prevents two classification processes from overwriting each other
 
 ### Verifier
-Re-examines every CERTAIN entry. Downgrades to LIKELY if source URLs are hallucinated (non-`https://`), contradict the market's settlement rules, or if a future-event market shows no forward-looking research. Acts as a final sanity check before edge calculation.
+Captures and caches cited pages, applies the configurable source policy, and requires an explicit evidence review for each CERTAIN claim. Records verified / contradicted / unverifiable separately from schema validation. Finalization withholds CERTAIN opportunities without current, matching verification. Trusted publishers do not bypass article-level support checks. See [the verification workflow](docs/verification.md); automated semantic review is deferred.
 
 ### Opportunity Manager
 Computes expected edge after platform-specific fees (Kalshi: profit-based, Polymarket: volume-based). Applies Kelly criterion with 5% bankroll cap. Filters by dual threshold (raw edge ≥ 3% OR annualized edge ≥ 15%). Routes to notification or dashboard log.

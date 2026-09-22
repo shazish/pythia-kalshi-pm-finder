@@ -8,6 +8,7 @@ and routes to notification vs dashboard log.
 import json
 import os
 from datetime import datetime, timezone
+from verification import verification_passes
 
 DEFAULT_CONFIG = {
     "min_edge_after_fees": 0.03,     # 3% minimum edge to notify (baseline for 30-day market)
@@ -220,6 +221,13 @@ class OpportunityManager:
                     "validation_errors": classification.get("_validation_errors", []),
                     "logged_at": datetime.now(timezone.utc).isoformat(),
                 })
+                skipped_validation += 1
+                continue
+
+            # Schema validation cannot stand in for evidence verification.
+            if is_certain and not verification_passes(candidate, classification):
+                to_log.append({**cm, "routing": "skipped_evidence_unverified",
+                               "logged_at": datetime.now(timezone.utc).isoformat()})
                 skipped_validation += 1
                 continue
 

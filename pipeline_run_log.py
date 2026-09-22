@@ -170,6 +170,17 @@ class RunLog:
 
 """)
 
+    def step_evidence_verify(self, counts: dict) -> None:
+        status = "Verified" if not (counts["contradicted"] or counts["unverifiable"]) else "Evidence review required"
+        self._append(
+            f"## Step 4 — Evidence verification\n"
+            f"**Status:** {status} | **Timestamp:** {_now()}\n"
+            f"**Verified:** {counts['verified']} | **Contradicted:** {counts['contradicted']} | "
+            f"**Unverifiable:** {counts['unverifiable']}\n"
+            "Details: verification_report.json. Classification labels are preserved; "
+            "unverified CERTAIN entries are withheld at finalization.\n\n---\n\n"
+        )
+
     # ── Step 5: Finalize ──────────────────────────────────────────────────────
 
     def step_finalize(
