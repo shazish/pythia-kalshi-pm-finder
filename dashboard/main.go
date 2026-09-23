@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	textStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#cdd6f4"))
-	muted     = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6adc8"))
+	textStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#ecebe5"))
+	muted     = lipgloss.NewStyle().Foreground(lipgloss.Color("#abb2bd"))
 	accent    = lipgloss.NewStyle().Foreground(lipgloss.Color("#cba6f7")).Bold(true)
 	selected  = lipgloss.NewStyle().Foreground(lipgloss.Color("#1e1e2e")).Background(lipgloss.Color("#89b4fa")).Bold(true)
 	green     = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1"))
@@ -265,13 +265,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "down", "j":
 				m.offset++
 			case "pgdown", " ":
-				m.offset += max(1, m.height-9)
+				m.offset += m.detailPageSize()
 			case "pgup":
-				m.offset = max(0, m.offset-max(1, m.height-9))
+				m.offset = max(0, m.offset-m.detailPageSize())
 			case "home", "g":
 				m.offset = 0
 			}
-			m.offset = min(m.offset, max(0, len(m.detailLines())-max(1, m.height-8)))
+			m.offset = min(m.offset, max(0, len(m.detailLines())-m.detailPageSize()))
 			return m, nil
 		}
 		if m.emptyFocus {
@@ -386,7 +386,7 @@ func (m model) detailLines() []string {
 		r := rows[min(m.cursor, len(rows)-1)]
 		body = m.decisionBody(r)
 	}
-	return styledDetailLines(body, max(20, m.width-6), m.detail && m.detailTab == 3)
+	return styledDetailLines(body, max(20, min(144, m.width-4)-2), m.detail && m.detailTab == 3)
 }
 func (m model) View() string {
 	w := max(20, m.width-4)
@@ -414,47 +414,14 @@ func (m model) View() string {
 		lines = append(lines, "", muted.Render("↑↓ choose · Enter load · Esc cancel"))
 		return lipgloss.NewStyle().Padding(1, 2).Render(strings.Join(lines, "\n"))
 	}
-	runName := "No runs"
-	if len(m.runs) > 0 {
-		runName = "Reports grouped by scan · newest scans first"
-		if m.detail || m.inversions {
-			runName = m.runs[m.selectedRun()].Name
-		}
+	if m.detail || m.inversions {
+		return m.detailView(min(w, 144))
 	}
-	lines = append(lines, muted.Render(fit(runName, w)))
+	w = min(w, 144)
+	lines = m.masthead(w)
 	if m.err != "" {
 		lines = append(lines, yellow.Render(fit("Could not load: "+m.err, w)))
 	}
-	if m.detail || m.inversions {
-		content := m.detailLines()
-		page := max(1, m.height-8)
-		start := min(m.offset, max(0, len(content)-page))
-		end := min(len(content), start+page)
-		nav := "TIER INVERSIONS"
-		if m.detail {
-			parts := []string{}
-			for i, t := range detailTabs {
-				label := fmt.Sprintf("%d %s", i+1, t)
-				if i == m.detailTab {
-					label = selected.Render(" " + label + " ")
-				}
-				if i != m.detailTab {
-					label = muted.Render(label)
-				}
-				parts = append(parts, label)
-			}
-			nav = strings.Join(parts, "  ")
-			if ansi.StringWidth(nav) > w {
-				nav = fmt.Sprintf("%d / 4 · %s · Tab to switch", m.detailTab+1, detailTabs[m.detailTab])
-			}
-		}
-		lines = append(lines, accent.Render(nav))
-		lines = append(lines, content[start:end]...)
-		lines = append(lines, "", muted.Render(fmt.Sprintf("Tab sections · ↑↓ scroll · Esc back   %d / %d", start+1, max(1, len(content)))))
-		return textStyle.Padding(1, 2).Render(strings.Join(lines, "\n"))
-	}
-	lines = append(lines, "", green.Render(fit(fmt.Sprintf("%d reports · %d archived results", len(m.runs), len(m.data.Rows)), w)))
-	lines = append(lines, muted.Render("Historical prices · Edge n/a = not calculated / saved"))
 
 	nav := []string{}
 	for i, t := range tabs {
@@ -464,7 +431,7 @@ func (m model) View() string {
 			nav = append(nav, tierStyle(t).Render(t))
 		}
 	}
-	lines = append(lines, ansi.Truncate(strings.Join(nav, "  "), w, "…"))
+	lines = append(lines, " "+ansi.Truncate(strings.Join(nav, "  "), w-1, "…"))
 	if w < 100 {
 		lines[len(lines)-1] = tierStyle(tabs[m.tab]).Bold(true).Render(fmt.Sprintf("‹ %s ›", tabs[m.tab])) + muted.Render("   Tab switches filters")
 	}
@@ -475,9 +442,9 @@ func (m model) View() string {
 	if m.searching {
 		search = m.query + "▏"
 	}
-	lines = append(lines, fit("⌕ "+search+"   ·   "+sorts[m.sortMode], w), marketColumns(w))
+	lines = append(lines, muted.Render(fit(" ⌕ "+search+"   ·   "+sorts[m.sortMode]+"   ·   Newest scans first", w)), chromeRule(w), marketColumns(w))
 	rows := m.filtered()
-	page := max(1, m.height-15)
+	page := max(1, m.height-len(lines)-5)
 	cursor := min(m.cursor, max(0, len(rows)-1))
 	lines = append(lines, m.groupedLines(rows, cursor, page, w)...)
 
@@ -492,9 +459,10 @@ func (m model) View() string {
 	}
 	lines = append(lines, muted.Render(fit(fmt.Sprintf("%d matches · ↑↓ navigate · Enter details · Tab filter · / search · s sort", len(rows)), w)),
 		muted.Render(fit("r jump to run · R reload · x clear · i inversions · q quit", w)))
-	return textStyle.Padding(1, 2).Render(strings.Join(lines, "\n"))
+	return textStyle.Background(canvasSurface).Padding(1, max(2, (m.width-w)/2)).Width(m.width).Render(strings.Join(lines, "\n"))
 }
 func main() {
+	configureColors()
 	root := flag.String("path", "..", "Pythia repository root")
 	snapshot := flag.Bool("snapshot", false, "Print a non-interactive preview")
 	focus := flag.String("run", "", "Initially focus this completed run")

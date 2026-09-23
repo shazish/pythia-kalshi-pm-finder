@@ -39,8 +39,8 @@ func marketLine(r row, isSelected bool, w int) string {
 	title := fit(r.title(), tw)
 	title += strings.Repeat(" ", max(0, tw-ansi.StringWidth(title)))
 	if isSelected {
-		status := tierStyle(tier).Background(lipgloss.Color("#313244")).Render(tier) + pad
-		return rowSelected.Render("› " + title + "  " + status + tail)
+		status := tierStyle(tier).Background(lipgloss.Color("#2b3944")).Render(tier + pad)
+		return rowSelected.Render("› "+title+"  ") + status + rowSelected.Render(tail)
 	}
 	return "  " + title + "  " + tierText(tier) + pad + tail
 }
@@ -52,8 +52,8 @@ func (m model) groupedLines(rows []row, cursor, page, w int) []string {
 	var display []line
 	selectedLine := 0
 	addGroup := func(index int) {
-		display = append(display, line{accent.Render(fit(m.runHeader(index), w)), -1, index})
-		display = append(display, line{m.runModels(index, w), -1, index})
+		display = append(display, line{runBand(m.runHeader(index), w, true), -1, index})
+		display = append(display, line{runBand(m.runModels(index, w), w, false), -1, index})
 	}
 	// Headers are presentation only; cursor indexes exclusively market rows.
 	if len(m.runs) == 0 {
@@ -66,6 +66,9 @@ func (m model) groupedLines(rows []row, cursor, page, w int) []string {
 	} else {
 		next := 0
 		for index := range m.runs {
+			if index > 0 {
+				display = append(display, line{"", -1, index})
+			}
 			addGroup(index)
 			if m.emptyFocus && index == m.emptyRun {
 				selectedLine = len(display) - 2
@@ -96,9 +99,9 @@ func (m model) groupedLines(rows []row, cursor, page, w int) []string {
 	start = min(start, len(display)-1)
 	var out []string
 	if start > 0 && display[start].row >= 0 {
-		out = append(out, accent.Render(fit(m.runHeader(display[start].group), w)))
+		out = append(out, runBand(m.runHeader(display[start].group), w, true))
 		if page >= 3 {
-			out = append(out, m.runModels(display[start].group, w))
+			out = append(out, runBand(m.runModels(display[start].group, w), w, false))
 		}
 	}
 	for i := start; i < len(display) && len(out) < page; i++ {

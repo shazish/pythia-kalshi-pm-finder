@@ -17,7 +17,7 @@ var (
 	warningStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#fab387"))
 	dangerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8"))
 	metricStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#89dceb")).Bold(true)
-	rowSelected   = lipgloss.NewStyle().Background(lipgloss.Color("#313244")).Foreground(lipgloss.Color("#cdd6f4")).Bold(true)
+	rowSelected   = lipgloss.NewStyle().Background(lipgloss.Color("#2b3944")).Foreground(lipgloss.Color("#ecebe5")).Bold(true)
 	urlPattern    = regexp.MustCompile(`https?://[^\s]+`)
 	metricPattern = regexp.MustCompile(`(?:[0-9]+(?:\.[0-9]+)?(?:%|¢| USD| / 100)|Side (?:YES|NO))`)
 )
@@ -75,11 +75,11 @@ func styledDetailLines(body string, width int, raw bool) []string {
 		for _, part := range strings.Split(ansi.Wrap(display, max(20, width), ""), "\n") {
 			switch {
 			case index == 0:
-				part = titleStyle.Render(part)
+				part = lipgloss.NewStyle().Foreground(brandGold).Bold(true).Render(part)
 			case index == 1:
 				part = muted.Render(part)
 			case isHeading:
-				part = heading.Bold(true).Render(part)
+				part = heading.Bold(true).Background(runSurface).Width(width).Render(part)
 			case part == "Not recorded." || part == "None recorded." || strings.HasPrefix(part, "No ") || strings.HasPrefix(part, "Recorded citations;"):
 				part = muted.Italic(true).Render(part)
 			case raw:
