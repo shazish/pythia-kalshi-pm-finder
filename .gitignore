@@ -42,3 +42,6 @@ plans/
 tmp/
 research_batch*.py
 do_search.py
+
+# Dashboard build cache
+dashboard/.bin/

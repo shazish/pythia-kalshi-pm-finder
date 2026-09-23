@@ -105,6 +105,8 @@ class ArticleReviewer:
             prompt = json.dumps(payload, ensure_ascii=True)
             if len(prompt) > MAX_INPUT_CHARS:
                 raise ValueError("Article context exceeds review budget; no evidence was silently truncated")
+            if hasattr(self.client, "_model_calls"):
+                self.client._model_calls = []
             raw = self.client._call_api(SYSTEM, prompt)
             result = self.client._parse_json(raw)
             items = result.get("reviews") if isinstance(result, dict) else None
@@ -139,6 +141,8 @@ class ArticleReviewer:
                 validated[key] = {k: item[k] for k in ("verdict", "excerpt", "reason", *flags)}
                 validated[key].update(reviewer="model:" + self.client.model, reviewed_at=now(),
                                       automatic_version=REVIEW_VERSION)
+                if hasattr(self.client, "model_provenance"):
+                    validated[key]["_model_provenance"] = self.client.model_provenance("api")
             reviews.update(validated)
             return {}
         except Exception as error:

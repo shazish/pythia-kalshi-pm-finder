@@ -111,6 +111,9 @@ def cmd_finalize(args):
     xlsx = os.path.join(cfg["log_dir"], f"kalshi_{mode}_{ts}.xlsx")
     result = export_excel(to_notify, to_log, xlsx)
     print(f"\nReport: {result}")
+    from pathlib import Path
+    from shared.dashboard_launcher import open_dashboard
+    open_dashboard(SKILL_DIR, Path(result).stem, cfg["log_dir"])
 
 
 def cmd_backtest(args):

@@ -340,6 +340,8 @@ if args.mode == "subagent":
         print(f"     If actual_candidates > max_candidates, write an error and STOP.")
         print(f"     Classify each candidate in `candidates` using the research index.")
         print(f"     Write results to classified_chunk_{i}.json.")
+        print('     Include classification._model_provenance = {"method":"agent","model":"actual model ID or null","harness":"actual harness or null"}.')
+        print("     Read identity from your session metadata; never guess from another stage or machine configuration.")
         print()
     print(f"  2. After all complete, merge:")
     print(f"     python3 step_3_classification/classify_all.py --run-dir {args.run_dir} --merge")
@@ -452,6 +454,7 @@ try:
                 "searched_for": [], "recent_developments": "",
                 "what_would_change_this": "Retry classification manually",
                 "_valid": False, "_validation_errors": ["API failed"],
+                "_model_provenance": clf.model_provenance("api"),
             }
 
         clf_label = classification.get("classification", "?")

@@ -687,6 +687,7 @@ class Classifier:
     def __init__(self, api_key: str = None, model: str = None):
         self.model = model or self._resolve_model()
         self.api_key = api_key or self._load_api_key(self.model)
+        self._model_calls = []
 
     # ── Public ────────────────────────────────────────────────────────────────
 
@@ -700,6 +701,7 @@ class Classifier:
                           web-search instructions are replaced with pre-conducted findings.
             recency_days: window for the mandatory recency search instruction.
         """
+        self._model_calls = []
         if recency_days is None:
             recency_days = load_config()["recency_days"]
         is_anomaly = (
@@ -708,7 +710,10 @@ class Classifier:
         )
 
         if is_anomaly:
-            return self._classify_anomaly(candidate)
+            result = self._classify_anomaly(candidate)
+            method = "deterministic+llm_veto" if self._model_calls else "deterministic"
+            result["_model_provenance"] = self.model_provenance(method)
+            return result
 
         system_prompt = get_classifier_system_prompt(recency_days)
         user_prompt = build_regular_prompt(candidate, recency_days)
@@ -754,6 +759,9 @@ class Classifier:
                 continue
             break
 
+        validated["_model_provenance"] = self.model_provenance("api")
+        if research and research.get("_model_provenance"):
+            validated["_research_provenance"] = research["_model_provenance"]
         return validated
 
     # ── Private ───────────────────────────────────────────────────────────────
@@ -912,19 +920,31 @@ class Classifier:
 
         return prompt, searches[:6]
 
+    def model_provenance(self, method="api"):
+        return {"method": method, "calls": [dict(c) for c in self._model_calls]}
+
     def _call_api(self, system_prompt: str, user_prompt: str) -> str:
         import requests as _req
-
-        if not self.api_key:
-            provider = "OPENROUTER_API_KEY" if self._is_openrouter(self.model) else "ANTHROPIC_API_KEY"
-            raise RuntimeError(
-                f"{provider} not set. Export it in the environment or add it to .env.\n"
-                f"Active model: {self.model} (set via CLASSIFIER_MODEL / HERMES_MODEL / MODEL)"
-            )
-
-        if self._is_openrouter(self.model):
-            return self._call_openrouter(_req, system_prompt, user_prompt)
-        return self._call_anthropic(_req, system_prompt, user_prompt)
+        from datetime import datetime, timezone
+        call = {"requested_model": self.model,
+                "provider": "OpenRouter" if self._is_openrouter(self.model) else "Anthropic",
+                "recorded_at": datetime.now(timezone.utc).isoformat(), "status": "started"}
+        self._model_calls.append(call)
+        self._returned_model = None
+        try:
+            if not self.api_key:
+                raise RuntimeError("API key not configured for active model: " + self.model)
+            if self._is_openrouter(self.model):
+                result = self._call_openrouter(_req, system_prompt, user_prompt)
+            else:
+                result = self._call_anthropic(_req, system_prompt, user_prompt)
+            call["status"] = "completed"
+            if self._returned_model:
+                call["returned_model"] = self._returned_model
+            return result
+        except Exception:
+            call["status"] = "failed"
+            raise
 
     def _call_anthropic(self, _req, system_prompt: str, user_prompt: str) -> str:
         resp = _req.post(
@@ -943,7 +963,9 @@ class Classifier:
             timeout=90,
         )
         resp.raise_for_status()
-        return resp.json()["content"][0]["text"]
+        data = resp.json()
+        self._returned_model = data.get("model")
+        return data["content"][0]["text"]
 
     # Models known to support response_format json_object reliably via OpenRouter.
     # Enforces JSON output at the API level — stronger than prompt-only instruction.
@@ -982,7 +1004,9 @@ class Classifier:
             timeout=90,
         )
         resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        data = resp.json()
+        self._returned_model = data.get("model")
+        return data["choices"][0]["message"]["content"]
 
     @staticmethod
     def _parse_json(text: str) -> dict:

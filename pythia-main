@@ -382,7 +382,7 @@ def finalize():
         log.warning("No .current_run pointer found; created fallback run folder: logs/%s/", run_dir)
 
     excel_basename = f"{run_dir}.xlsx"
-    excel_path = os.path.join(LOGS_DIR, excel_basename)
+    excel_path = os.path.join(run_path, excel_basename)
     tier_inv_path = str(_cache_dir / "tier_inversions.json")
     tier_inversions = []
     if os.path.exists(tier_inv_path):
@@ -429,6 +429,8 @@ def finalize():
 
     log.info("Report saved → logs/%s/", run_dir)
     print(f"\n[pythia-main] Run complete → {LOGS_DIR}/{run_dir}/")
+    from shared.dashboard_launcher import open_dashboard
+    open_dashboard(REPO, run_dir, LOGS_DIR)
 
 
 # ── Batch writing ─────────────────────────────────────────────────────────────
@@ -531,6 +533,10 @@ Batches:""")
             print(f"  Batch {i + 1}/{len(batches)}: {count} candidates -> {rel}")
 
         print(f"""
+MODEL ATTRIBUTION: Each research object must include _model_provenance with
+method="agent", model=<actual model ID or null>, harness=<actual harness or null>.
+Use session metadata. Do not guess a model ID or copy the classifier's configured model.
+
 NOTE: Batch files are written directly to {LOGS_DIR}/{run_dir}/ — no separate copy needed.
 
 After EACH batch completes, run these three commands IN ORDER:
@@ -643,6 +649,12 @@ After retry completes (or is skipped), proceed to Step 3.
 {sep}
 STEP 3 — CLASSIFICATION  (one call per ticker — no shortcuts)
 {sep}
+
+For in-session classifications, include classification._model_provenance with
+method="agent", model=<actual model ID or null>, harness=<actual harness or null>.
+Use the classifying agent's own session metadata, not the parent agent's model.
+If identity is unavailable, record null.
+
 """)
 
     if is_anomaly:
@@ -912,6 +924,14 @@ def main() -> None:
 
     if not candidates:
         print("[pythia-main] No candidates. Pipeline done.")
+        from step_5_finalize.outcome_reporter import export_outcomes
+        from shared.dashboard_launcher import open_dashboard
+        export_outcomes([], [], [], Path(run_path) / f"{run_dir}.xlsx", mode)
+        try:
+            os.remove(CURRENT_RUN_POINTER)
+        except OSError:
+            pass
+        open_dashboard(REPO, run_dir, LOGS_DIR)
         sys.exit(0)
 
     _copy_to_run(cand_file, run_path)

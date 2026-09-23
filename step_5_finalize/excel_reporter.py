@@ -169,6 +169,13 @@ OPPORTUNITY_COLS += [
     ("Scan NO Ask (c)", 18, lambda r: r["candidate"].get("no_ask", "")),
 ]
 
+from shared.model_provenance import analysis_models
+OPPORTUNITY_COLS += [
+    ("Research Model", 45, lambda r: analysis_models(r)["research"]),
+    ("Classification Model", 55, lambda r: analysis_models(r)["classification"]),
+    ("Verification Model", 55, lambda r: analysis_models(r)["verification"]),
+]
+
 ALL_RESULTS_COLS = OPPORTUNITY_COLS  # same columns, more rows
 
 
@@ -475,6 +482,11 @@ def export_excel(to_notify, to_log, output_path, mode_label="", tier_inversions=
 
     near_misses = _extract_near_misses(to_log)
     opp_rows = to_notify + near_misses  # notified first, near-misses below
+
+    # Persist the exact finalization decisions for the Go dashboard.
+    from step_5_finalize.outcome_reporter import export_outcomes
+    export_outcomes(to_notify, to_log, near_misses, output_path,
+                    mode_label, tier_inversions)
 
     if not OPENPYXL_AVAILABLE:
         _export_csv_fallback(to_notify, to_log, output_path)
