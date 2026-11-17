@@ -190,7 +190,9 @@ func (m model) decisionBody(r row) string {
 		body += section("Anomaly evidence", r.Candidate["anomaly_evidence"])
 		body += section("Signal score", r.Classification["signal_score"])
 		body += section("Score breakdown", r.Classification["score_breakdown"])
-		body += section("Veto reason", r.Classification["veto_reason"])
+		body += section("Signal warnings", r.Classification["score_flags"])
+		body += section("Veto notes (against)", r.Classification["veto_reason"])
+		body += section("Veto notes (for)", r.Classification["supporting_info"])
 		body += "CONTRADICTING SIGNALS\n" + signals(r.Classification["contradicting_signals"]) + "\n\n"
 		body += section("Settlement risk", r.Classification["settlement_risk"])
 		body += section("What would change this", r.Classification["what_would_change_this"])
@@ -204,13 +206,22 @@ func (m model) decisionBody(r row) string {
 		scoreLabel = "Signal score"
 		suffix = " / 100"
 	}
-	body := head + fmt.Sprintf("%s · Side %s · %s %s\nAsk %s · Edge %s · Suggested size %s\n\n", r.tier(), r.side(), scoreLabel, metric(r.score(), 1, suffix), metric(r.ask(), 1, "¢"), r.edgeText(), metric(r.Size, 1, " USD"))
+	var body string
+	if r.isAnomaly() {
+		body = head + fmt.Sprintf("%s · Side %s · %s %s (not a probability)\nAsk %s · Signal to review — no edge or size\n\n", r.tier(), r.side(), scoreLabel, metric(r.score(), 1, suffix), metric(r.ask(), 1, "¢"))
+	} else {
+		body = head + fmt.Sprintf("%s · Side %s · %s %s\nAsk %s · Edge %s · Suggested size %s\n\n", r.tier(), r.side(), scoreLabel, metric(r.score(), 1, suffix), metric(r.ask(), 1, "¢"), r.edgeText(), metric(r.Size, 1, " USD"))
+	}
 	link := r.marketURL()
 	if link == "" {
 		link = "No market URL recorded."
 	}
 	body += section("Market link", link)
-	body += section("Edge after fees", r.edgeExplanation())
+	if r.isAnomaly() {
+		body += section("Why no edge", r.edgeExplanation())
+	} else {
+		body += section("Edge after fees", r.edgeExplanation())
+	}
 	body += section("Analysis models", analysisModels(r))
 	stamp := r.MarketDataAt
 	if stamp == "" {

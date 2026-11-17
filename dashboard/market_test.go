@@ -42,6 +42,24 @@ func TestMissingEdgeIsNotZero(t *testing.T) {
 		t.Fatal("explain routing")
 	}
 }
+func TestAnomalyNeverShowsEdge(t *testing.T) {
+	// Runs finalized before 2026-11-17 saved a meaningless edge for anomalies (+1595%).
+	saved := 15.95
+	score := 86.0
+	r := row{Candidate: object{"candidate_type": "anomaly"}, Edge: &saved, Finalized: true,
+		Classification: object{"signal_score": score, "tier": "STRONG", "high_confidence_side": "YES"}}
+	if got := r.listMetric(); got != "sig 86.0" {
+		t.Fatalf("list must show signal score, got %q", got)
+	}
+	if strings.Contains(r.listMetric(), "%") || !strings.Contains(r.edgeExplanation(), "by design") {
+		t.Fatal("anomaly must not present an edge")
+	}
+	m := model{} // detailTab 0 = summary tab
+	body := m.decisionBody(r)
+	if strings.Contains(body, "Edge after fees") || strings.Contains(body, "1595") || !strings.Contains(body, "no edge or size") {
+		t.Fatalf("details must not show an edge for anomalies:\n%s", body)
+	}
+}
 func TestWrappedMarketLinkKeepsTarget(t *testing.T) {
 	link := "https://polymarket.com/event/a-very-long-market-slug-that-wraps-on-a-narrow-terminal"
 	body := strings.Join(styledDetailLines("Title\nTicker\n\nMARKET LINK\n"+link, 44, false), "\n")

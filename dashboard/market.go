@@ -51,7 +51,19 @@ func (r row) edgeText() string {
 	}
 	return metric(r.Edge, 100, "%")
 }
+
+// listMetric is the last column of the market list: edge for priced bets, signal score
+// for anomaly signals.
+func (r row) listMetric() string {
+	if r.isAnomaly() {
+		return "sig " + metric(r.score(), 1, "")
+	}
+	return r.edgeText()
+}
 func (r row) edgeExplanation() string {
+	if r.isAnomaly() {
+		return "Not calculated by design: anomaly signals have a signal score, not a win-probability estimate, so no edge or size is computed."
+	}
 	if r.Edge != nil {
 		return fmt.Sprintf("%s expected return after fees, as saved at finalization. Historical estimate, not a live quote.", r.edgeText())
 	}

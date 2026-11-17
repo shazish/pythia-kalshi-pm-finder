@@ -113,6 +113,18 @@ func shortModel(label string) string {
 	return strings.Split(label, " (")[0]
 }
 func (m model) runModels(index, w int) string {
+	if m.cache == nil || m.cache.models == nil {
+		return m.computeRunModels(index, w)
+	}
+	key := [2]int{index, w}
+	if s, ok := m.cache.models[key]; ok {
+		return s
+	}
+	s := m.computeRunModels(index, w)
+	m.cache.models[key] = s
+	return s
+}
+func (m model) computeRunModels(index, w int) string {
 	rows := []row{}
 	if index < len(m.reports) {
 		rows = m.reports[index].Rows

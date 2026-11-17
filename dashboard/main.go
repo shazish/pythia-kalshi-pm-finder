@@ -23,7 +23,7 @@ var (
 	yellow    = lipgloss.NewStyle().Foreground(lipgloss.Color("#f9e2af"))
 )
 var tabs = []string{"All", "Opportunities", "Near misses", "Certain", "Likely", "Unclear", "Anomalies"}
-var sorts = []string{"Edge ↓", "Confidence / signal ↓", "Close date ↑", "Title A–Z"}
+var sorts = []string{"Edge, then signal ↓", "Confidence / signal ↓", "Close date ↑", "Title A–Z"}
 
 type model struct {
 	root                                     string
@@ -39,6 +39,17 @@ type model struct {
 	tab, sortMode, cursor, offset, detailTab int
 	query                                    string
 	searching, picker, detail, inversions    bool
+	cache                                    *viewCache
+}
+
+// viewCache keeps work that only changes when the data, tab, search or sort changes, so
+// moving the cursor does not re-filter, re-sort and re-summarise thousands of rows.
+// It is a pointer so the copies Bubble Tea makes of the model share it.
+type viewCache struct {
+	gen       int
+	filterKey string
+	rows      []row
+	models    map[[2]int]string // (run index, width) → model summary band
 }
 
 func clean(s string) string {
@@ -95,6 +106,13 @@ func (m *model) reload() {
 	}
 }
 func (m *model) load() {
+	if m.cache == nil {
+		m.cache = &viewCache{}
+	}
+	m.cache.gen++
+	m.cache.filterKey = ""
+	m.cache.rows = nil
+	m.cache.models = map[[2]int]string{}
 	m.data = report{}
 	m.emptyFocus = false
 	m.reports = nil
@@ -132,6 +150,17 @@ func (m model) selectedRun() int {
 	return rows[min(m.cursor, len(rows)-1)].RunIndex
 }
 func (m model) filtered() []row {
+	if m.cache == nil {
+		return m.computeFiltered()
+	}
+	key := fmt.Sprintf("%d|%d|%d|%d|%s", m.cache.gen, len(m.data.Rows), m.tab, m.sortMode, m.query)
+	if m.cache.filterKey != key {
+		m.cache.rows = m.computeFiltered()
+		m.cache.filterKey = key
+	}
+	return m.cache.rows
+}
+func (m model) computeFiltered() []row {
 	rows := []row{}
 	for _, r := range m.data.Rows {
 		match := true
@@ -161,13 +190,31 @@ func (m model) filtered() []row {
 		}
 		switch m.sortMode {
 		case 0:
-			if a.Edge == nil {
+			// Priced bets by edge first; anomaly signals (never an edge) after, by signal score.
+			ae, be := a.Edge, b.Edge
+			if a.isAnomaly() {
+				ae = nil
+			}
+			if b.isAnomaly() {
+				be = nil
+			}
+			if ae == nil && be == nil {
+				av, bv := a.score(), b.score()
+				if av == nil {
+					return false
+				}
+				if bv == nil {
+					return true
+				}
+				return *av > *bv
+			}
+			if ae == nil {
 				return false
 			}
-			if b.Edge == nil {
+			if be == nil {
 				return true
 			}
-			return *a.Edge > *b.Edge
+			return *ae > *be
 		case 1:
 			av, bv := a.score(), b.score()
 			if av == nil {
@@ -304,10 +351,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = max(0, m.cursor-1)
 		case "down", "j":
 			m.cursor = min(max(0, len(m.filtered())-1), m.cursor+1)
-		case "pgdown":
+		case "pgdown", "ctrl+d", "J", " ", "space":
+			m.emptyFocus = false
 			m.cursor = min(max(0, len(m.filtered())-1), m.cursor+max(1, m.height-14))
-		case "pgup":
+		case "pgup", "ctrl+u", "K":
+			m.emptyFocus = false
 			m.cursor = max(0, m.cursor-max(1, m.height-14))
+		case "]":
+			// Jump to the first row of the next run.
+			if rows := m.filtered(); len(rows) > 0 {
+				cur := rows[min(m.cursor, len(rows)-1)].RunIndex
+				for i := m.cursor; i < len(rows); i++ {
+					if rows[i].RunIndex != cur {
+						m.cursor = i
+						break
+					}
+				}
+			}
+		case "[":
+			// Jump to the first row of this run, or of the previous run if already there.
+			if rows := m.filtered(); len(rows) > 0 {
+				c := min(m.cursor, len(rows)-1)
+				if c > 0 && rows[c-1].RunIndex != rows[c].RunIndex {
+					c--
+				}
+				run := rows[c].RunIndex
+				for c > 0 && rows[c-1].RunIndex == run {
+					c--
+				}
+				m.cursor = c
+			}
 		case "home", "g":
 			m.emptyFocus = false
 			m.cursor = 0
@@ -457,8 +530,8 @@ func (m model) View() string {
 	} else {
 		lines = append(lines, "")
 	}
-	lines = append(lines, muted.Render(fit(fmt.Sprintf("%d matches · ↑↓ navigate · Enter details · Tab filter · / search · s sort", len(rows)), w)),
-		muted.Render(fit("r jump to run · R reload · x clear · i inversions · q quit", w)))
+	lines = append(lines, muted.Render(fit(fmt.Sprintf("%d matches · ↑↓ move · PgUp/PgDn or K/J or Space page · [ ] prev/next run · g/G top/end", len(rows)), w)),
+		muted.Render(fit("Enter details · Tab filter · / search · s sort · r pick run · R reload · x clear · i inversions · q quit", w)))
 	return textStyle.Background(canvasSurface).Padding(1, max(2, (m.width-w)/2)).Width(m.width).Render(strings.Join(lines, "\n"))
 }
 func main() {

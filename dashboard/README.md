@@ -21,7 +21,11 @@ use the pipeline’s configured report directory.
 - ↑/↓ or j/k: select a market. Page Up/Down: move a page.
 - Tab / Shift+Tab: switch outcome filters.
 - /: search title, ticker, platform, category, or routing status. Enter finishes input; x clears.
-- s: cycle edge, confidence/signal, closing date, and title sorting.
+- s: cycle edge-then-signal, confidence/signal, closing date, and title sorting.
+
+Anomaly rows never show an edge: their score measures unusual buying, not a win
+probability. The last list column ("Edge/Sig") shows `sig <score>` for them, also for
+older runs that saved an edge for anomalies before 2026-11-17.
 - Enter: open the selected market's decision brief.
 - In the brief, Tab or 1–4 selects Decision, Sources, Anomalies, or Raw record.
 - ↑/↓ and Page Up/Down scroll the brief; Esc returns to the same list selection.

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"os"
@@ -65,6 +67,56 @@ func TestScanStartIsNotOverwrittenByResearchOrReexport(t *testing.T) {
 	stamp, kind = runMetadata(r)
 	if stamp.Minute() != 36 || kind != "k-full" {
 		t.Fatal("use pipeline start, not research start")
+	}
+}
+
+func TestPagingAndRunJumps(t *testing.T) {
+	root := t.TempDir()
+	write := func(name string, n int) {
+		dir := filepath.Join(root, "logs", name)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		rows := []string{}
+		for i := 0; i < n; i++ {
+			rows = append(rows, fmt.Sprintf(`{"candidate":{"ticker":"%s-%02d","title":"Market %02d"}}`, name, i, i))
+		}
+		body := `{"schema_version":1,"mode":"k-full","rows":[` + strings.Join(rows, ",") + `]}`
+		if err := os.WriteFile(filepath.Join(dir, "report.outcomes.json"), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("20260923_1200_k-full", 40) // newest: rows 0-39
+	write("20260922_1200_k-full", 40) // older: rows 40-79
+	m := model{root: root, width: 120, height: 30}
+	m.reload()
+	step := m.height - 14
+	m = key(m, tea.KeyMsg{Type: tea.KeyPgDown})
+	if m.cursor != step {
+		t.Fatalf("PgDn moved to %d, want %d", m.cursor, step)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("J")})
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("K")})
+	if m.cursor != step {
+		t.Fatal("J then K should return to the same row")
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	if m.cursor != 40 {
+		t.Fatalf("] should jump to the next run's first row, got %d", m.cursor)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyDown})
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
+	if m.cursor != 40 {
+		t.Fatalf("[ should go to the start of this run, got %d", m.cursor)
+	}
+	m = key(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
+	if m.cursor != 0 {
+		t.Fatalf("[ at a run start should go to the previous run, got %d", m.cursor)
+	}
+	// Changing the tab must not reuse the cached list from the old tab.
+	m = key(m, tea.KeyMsg{Type: tea.KeyTab})
+	if got := len(m.filtered()); got != 0 {
+		t.Fatalf("Opportunities tab should be empty for these rows, got %d", got)
 	}
 }
 

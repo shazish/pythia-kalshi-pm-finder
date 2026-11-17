@@ -96,8 +96,14 @@ func (r row) ask() *float64 {
 	}
 	return nil
 }
+
+// Anomaly rows are signals: their score is not a win probability, so they never carry an
+// edge — not even the meaningless edge values older runs saved before 2026-11-17.
+func (r row) isAnomaly() bool {
+	return strings.Contains(str(r.Candidate, "candidate_type"), "anomaly")
+}
 func (r row) score() *float64 {
-	if strings.Contains(str(r.Candidate, "candidate_type"), "anomaly") {
+	if r.isAnomaly() {
 		return number(r.Classification, "signal_score")
 	}
 	return number(r.Classification, "confidence_score")
