@@ -93,11 +93,17 @@ def _market_url(r):
             url = f"https://polymarket.com/event/{slug}" if slug else ""
         return url
     else:
-        series_ticker = candidate.get("series_ticker", "") or candidate.get("event_ticker", "")
+        # kalshi.com/markets/<series> is the whole series page and shows whichever event Kalshi
+        # features (e.g. a different movie). The event page is /markets/<series>/<slug>/<event>;
+        # Kalshi routes on the event ticker, so the slug is cosmetic ("x", as in its share links).
+        event_ticker = candidate.get("event_ticker", "") or ""
+        series_ticker = candidate.get("series_ticker", "") or event_ticker.split("-")[0]
         if not series_ticker:
             log.warning("No series_ticker or event_ticker for ticker=%s — URL will be missing",
                         candidate.get("ticker", "?"))
             return ""
+        if event_ticker:
+            return f"https://kalshi.com/markets/{series_ticker.lower()}/x/{event_ticker.lower()}"
         return f"https://kalshi.com/markets/{series_ticker.lower()}"
 
 

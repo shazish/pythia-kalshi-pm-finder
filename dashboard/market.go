@@ -35,13 +35,22 @@ func (r row) marketURL() string {
 		return ""
 	}
 	if strings.EqualFold(r.platform(), "Kalshi") {
-		ticker := str(r.Candidate, "series_ticker")
-		if ticker == "" {
-			ticker = str(r.Candidate, "event_ticker")
+		// /markets/<series> alone is the series page, which shows whichever event Kalshi
+		// features. Kalshi routes /markets/<series>/<slug>/<event> on the event ticker; the
+		// slug is cosmetic ("x", as in Kalshi's own share links).
+		event := str(r.Candidate, "event_ticker")
+		series := str(r.Candidate, "series_ticker")
+		if series == "" && event != "" {
+			series = strings.SplitN(event, "-", 2)[0]
 		}
-		if ticker != "" {
-			return "https://kalshi.com/markets/" + url.PathEscape(strings.ToLower(ticker))
+		if series == "" {
+			return ""
 		}
+		link := "https://kalshi.com/markets/" + url.PathEscape(strings.ToLower(series))
+		if event != "" {
+			link += "/x/" + url.PathEscape(strings.ToLower(event))
+		}
+		return link
 	}
 	return ""
 }

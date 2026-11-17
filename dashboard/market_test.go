@@ -11,6 +11,9 @@ func TestMarketURLs(t *testing.T) {
 		want      string
 	}{
 		{object{"platform": "Kalshi", "series_ticker": "KXIPOOURA"}, "https://kalshi.com/markets/kxipooura"},
+		// The series page alone shows whichever event Kalshi features; link the event itself.
+		{object{"platform": "Kalshi", "series_ticker": "KXRT", "event_ticker": "KXRT-VIO"}, "https://kalshi.com/markets/kxrt/x/kxrt-vio"},
+		{object{"platform": "Kalshi", "event_ticker": "KXFEDDECISION-26DEC"}, "https://kalshi.com/markets/kxfeddecision/x/kxfeddecision-26dec"},
 		{object{"platform": "Polymarket", "settlement_source_url": "https://polymarket.com/event/example"}, "https://polymarket.com/event/example"},
 		{object{"platform": "Polymarket", "settlement_source_url": "https://federalreserve.gov", "slug": "fed-rate"}, "https://polymarket.com/event/fed-rate"},
 		{object{"platform": "Polymarket", "url": "javascript:alert(1)"}, ""},
