@@ -58,7 +58,7 @@ ANOMALY_DEFAULTS = {
     "trade_window_hours": 24,
     "trade_pages_max": 5,                 # x1000 trades per market
     "max_flow_candidates": 600,           # cap on markets whose trades are fetched per scan
-    "min_flow_contracts": 500,            # taker-flow sample below this is not scored
+    "min_signal_dollars": 2000,           # $ taker money on the leading side before flow sets the side / scores
     "large_trade_dollars": 500,           # a single taker trade >= this is a "large trade"
     "cotimed_window_minutes": 15,         # large trades in sibling markets this close = coordinated
     "prior_max_age_hours": 168,           # snapshot-cache deltas older than this are ignored

@@ -136,7 +136,8 @@ OPPORTUNITY_COLS = [
     ("Side",                    6, lambda r: r["classification"].get("high_confidence_side", "")),
     ("Bid Price (c)",          12, lambda r: int(r.get("market_snapshot", r["candidate"]).get("implied_probability", 0) or 0)),
     ("Ask Price (c)",          12, _ask_price_cents),
-    ("Confidence %",           13, lambda r: r["classification"].get("signal_score", r["classification"].get("confidence_score", "")) if r.get("candidate", {}).get("candidate_type") == "anomaly" else r["classification"].get("confidence_score", "")),
+    # Anomalies have no win-probability estimate; their strength is in Signal Score.
+    ("Confidence %",           13, lambda r: "" if _is_anomaly(r) else r["classification"].get("confidence_score", "")),
     ("Classification",         14, lambda r: r["classification"].get("tier", r["classification"].get("classification", "")) if r.get("candidate", {}).get("candidate_type") == "anomaly" else r["classification"].get("classification", "")),
     ("Signal Score",           13, lambda r: r["classification"].get("signal_score", "") if r.get("candidate", {}).get("candidate_type") == "anomaly" else ""),
     ("Status",                 24, lambda r: r.get("_opportunity_status", r.get("routing", ""))),
@@ -150,8 +151,9 @@ OPPORTUNITY_COLS = [
     ("Suggested Size ($)",     16, lambda r: r.get("position_size_usd", "")),
     ("Volume",                 12, lambda r: int(r["candidate"].get("volume", 0) or 0)),
     ("Volume Anomaly",         22, lambda r: _anomaly_str(r["candidate"].get("volume_anomaly"))),
-    ("Anomaly Evidence",       35, lambda r: _anomaly_evidence_str(r["candidate"].get("anomaly_evidence")) if r["candidate"].get("candidate_type") == "anomaly" else ""),
-    ("Veto Reason",            30, lambda r: r["classification"].get("veto_reason", "") if r.get("candidate", {}).get("candidate_type") == "anomaly" else ""),
+    ("Anomaly Evidence",       60, lambda r: _anomaly_evidence_str(r) if _is_anomaly(r) else ""),
+    ("Signal Warnings",        45, lambda r: " | ".join(r["classification"].get("score_flags", [])) if _is_anomaly(r) else ""),
+    ("Veto Notes",             45, lambda r: _veto_notes(r) if _is_anomaly(r) else ""),
     ("Contradicting Signals",  35, lambda r: _contra_str(r["classification"].get("contradicting_signals", []))),
     ("Settlement Risk",        35, lambda r: r["classification"].get("settlement_risk", "")),
     ("What Would Change This", 40, lambda r: r["classification"].get("what_would_change_this", "")),
@@ -203,7 +205,57 @@ def _anomaly_str(anomaly):
     )
 
 
-def _anomaly_evidence_str(evidence):
+def _is_anomaly(r):
+    return "anomaly" in (r.get("candidate", {}).get("candidate_type") or "")
+
+
+def _veto_notes(r):
+    cl = r["classification"]
+    parts = []
+    if cl.get("veto_pending"):
+        parts.append("Veto pending")
+    if cl.get("veto_unavailable"):
+        parts.append(f"Veto unavailable: {cl.get('veto_reason', '')}")
+    elif cl.get("vetoed"):
+        parts.append(f"VETOED ({cl.get('veto_confidence')}%): {cl.get('veto_reason', '')}")
+    elif cl.get("veto_reason"):
+        parts.append(f"Against (not vetoed): {cl['veto_reason']}")
+    if cl.get("supporting_info"):
+        parts.append(f"For: {cl['supporting_info']}")
+    return " | ".join(parts)
+
+
+def _anomaly_evidence_str(r):
+    """Plain summary of what was bought, by whom, and how the price reacted (signal side)."""
+    evidence = r["candidate"].get("anomaly_evidence") or {}
+    flow = evidence.get("flow")
+    if flow is None:
+        return _legacy_evidence_str(evidence)
+    side = r["classification"].get("high_confidence_side") or evidence.get("high_confidence_side", "")
+    other = "NO" if side == "YES" else "YES"
+    kind = {"favourite_accumulation": "buying the favourite", "longshot_accumulation": "buying the longshot",
+            "volume_only": "busy, direction unclear"}.get(evidence.get("anomaly_type"), evidence.get("anomaly_type", ""))
+    parts = [kind]
+    if "error" in flow:
+        parts.append(f"no trade data ({flow['error'][:60]})")
+    else:
+        mine = flow.get(f"taker_{side.lower()}_dollars") or 0
+        theirs = flow.get(f"taker_{other.lower()}_dollars") or 0
+        share = mine / (mine + theirs) if mine + theirs else 0
+        parts.append(f"24h: ${mine:,.0f} bought {side} vs ${theirs:,.0f} {other} ({share:.0%})")
+        parts.append(f"{flow.get('n_trades', 0)} trades, top 5 = {(flow.get('top5_share') or 0):.0%} of $")
+    if evidence.get("is_new_market"):
+        parts.append("new market")
+    elif evidence.get("volume_spike") is not None:
+        parts.append(f"volume {evidence['volume_spike']:.0f}x normal")
+    if evidence.get("signal_price_change_24h") is not None:
+        parts.append(f"{side} price {evidence['signal_price_change_24h']:+.0f}c in 24h")
+    if evidence.get("cotimed_markets"):
+        parts.append("same-side big trades on: " + ", ".join(evidence["cotimed_markets"][:4]))
+    return " | ".join(parts)
+
+
+def _legacy_evidence_str(evidence):
     if not evidence:
         return ""
     parts = [
@@ -397,15 +449,20 @@ def _write_legend(wb):
         ("Yellow (LIKELY)", "Classifier assessed outcome as probable but not certain"),
         ("Orange (UNCLEAR)", "Classifier could not determine outcome with sufficient confidence"),
         ("Red tint", "Market has a VOLUME ANOMALY flag — large bets against the high-confidence side. Requires investigation."),
-        ("Gold (STRONG)", "Anomaly candidate: quantitative score ≥70 — large unexplained smart-money accumulation, passed LLM veto check. Actionable."),
-        ("Light amber (WATCH)", "Anomaly candidate: quantitative score 45–69 — notable signal, not strong enough to action. Monitor."),
+        ("Gold (STRONG)", "Anomaly signal: score ≥70 — unusual one-sided buying with real money behind it, passed the veto check. A signal to review, NOT a priced bet: no edge or size is computed."),
+        ("Light amber (WATCH)", "Anomaly signal: score 40–69 (45–69 for Polymarket), or capped at WATCH by a warning (price falling, wide spread, already above 85c). Monitor."),
         ("", ""),
         ("Column", "Description"),
-        ("Status", "OPPORTUNITY = actionable; NEAR MISS = CERTAIN but filtered (see Validation Errors)"),
+        ("Status", "OPPORTUNITY = actionable priced bet; SIGNAL — review = STRONG anomaly that passed the veto (no edge, check it yourself); NEAR MISS = CERTAIN/STRONG but filtered (see Validation Errors)"),
         ("Validation Errors", "Why a CERTAIN candidate failed structural checks (e.g. fewer than 3 searches logged). Fix by re-running classification with stricter search logging."),
-        ("Edge %", "Expected return after Kalshi fees as % of capital deployed"),
+        ("Edge %", "Expected return after Kalshi fees as % of capital deployed. Blank for anomaly signals (no win-probability estimate)."),
+        ("Confidence %", "Classifier's win probability (CERTAIN/LIKELY/UNCLEAR rows). Blank for anomalies — see Signal Score."),
+        ("Signal Score", "Anomaly only, 0–100: how unusual and one-sided the last 24h of buying was. Not a probability."),
+        ("Anomaly Evidence", "Money bought on each side in the last 24h, trade count and concentration, volume vs normal, price move, same-side big trades on sibling strikes."),
+        ("Signal Warnings", "Reasons the signal is weaker or was capped at WATCH."),
+        ("Veto Notes", "What the veto check found: VETOED reason, evidence against that was not strong enough to veto, and evidence for."),
         ("Ann. Edge %", "Edge annualised by days to close (365 / days)"),
-        ("Suggested Size ($)", "Kelly-criterion position size, capped at 5% of bankroll"),
+        ("Suggested Size ($)", "Kelly-criterion position size, capped at 5% of bankroll. Blank for anomaly signals."),
         ("Volume Anomaly", "Opposite-side implied $ = volume × opposite_price / 100"),
         ("Contradicting Signals", "Facts found by classifier that argue against the high-confidence outcome"),
     ]
@@ -479,7 +536,7 @@ def export_excel(to_notify, to_log, output_path, mode_label="", tier_inversions=
              len(to_notify), len(to_log), output_path)
     # Tag notify rows with their status
     for r in to_notify:
-        r["_opportunity_status"] = "OPPORTUNITY"
+        r["_opportunity_status"] = "SIGNAL — review" if r.get("routing") == "notify_signal" else "OPPORTUNITY"
         r["_is_near_miss"] = False
 
     near_misses = _extract_near_misses(to_log)

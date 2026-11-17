@@ -223,16 +223,35 @@ class OpportunityManager:
                                "logged_at": datetime.now(timezone.utc).isoformat()})
                 continue
 
+            if is_strong_anomaly:
+                # An anomaly is a signal, not a probability estimate: its score measures how
+                # unusual the buying is, not the chance of winning. No edge or size is computed;
+                # it is reported for review, ranked by signal score.
+                opportunity = {
+                    **cm, **market_meta,
+                    "edge_after_fees": None, "annualized_edge": None, "position_size_usd": None,
+                    "true_prob_used": None, "fee_rate_used": None,
+                    "days_to_close": self.compute_days_to_close(candidate),
+                    "exec_price": self._exec_price(candidate, side),
+                    "market_price": candidate.get("implied_probability", 0) / 100.0,
+                    "platform": candidate.get("platform", "Kalshi"),
+                    "processed_at": datetime.now(timezone.utc).isoformat(),
+                }
+                if self._already_notified(ticker, side):
+                    opportunity["routing"] = "skipped_already_notified"
+                    to_log.append(opportunity)
+                    skipped_duplicate += 1
+                else:
+                    opportunity["routing"] = "notify_signal"
+                    to_notify.append(opportunity)
+                    self._mark_notified(ticker, side)
+                continue
+
             # Compute edge and sizing from the current quote, preserving the verified input.
             edge = self.compute_edge({**cm, "candidate": candidate})
             exec_price = self._exec_price(candidate, side)
             bid_price = candidate.get("implied_probability", 0) / 100.0  # for display only
-            if is_strong_anomaly:
-                # Anomaly: LLM hasn't estimated true_prob. Use market bid + 20c as conservative
-                # estimate that smart money is roughly correct. Capped at 90%.
-                true_prob = min(bid_price + 0.20, 0.90)
-            else:
-                true_prob = classification.get("confidence_score", 95) / 100.0
+            true_prob = classification.get("confidence_score", 95) / 100.0
 
             platform = candidate.get("platform", "Kalshi")
             category = candidate.get("category", "") if platform == "Polymarket" else None
@@ -289,6 +308,9 @@ class OpportunityManager:
                 to_log.append(opportunity)
                 skipped_below_threshold += 1
 
+        # Anomaly signals have no edge: list them strongest signal first, after edge opportunities.
+        to_notify.sort(key=lambda o: (o.get("routing") == "notify_signal",
+                                      -(o.get("classification", {}).get("signal_score") or 0)))
         log.info(
             "process() complete — notify=%d, log=%d | skipped: not_certain=%d, validation=%d, duplicate=%d, below_threshold=%d",
             len(to_notify), len(to_log), skipped_not_certain, skipped_validation,
@@ -308,8 +330,39 @@ class OpportunityManager:
                 f.write(json.dumps(entry, default=str) + "\n")
         return len(entries)
 
+    def format_signal_notification(self, opportunity):
+        """Anomaly signal: what was bought, how much, and what the veto found. No edge."""
+        c = opportunity.get("market_snapshot", opportunity.get("candidate", {}))
+        cl = opportunity.get("classification", {})
+        ev = opportunity.get("candidate", {}).get("anomaly_evidence", {})
+        flow = ev.get("flow") or {}
+        side = cl.get("high_confidence_side", "?")
+        ask_c = round((opportunity.get("exec_price") or 0) * 100)
+        other = "NO" if side == "YES" else "YES"
+        lines = [
+            f"{c.get('platform', 'Kalshi').upper()} ANOMALY SIGNAL (no edge estimate): {side} @ {ask_c}c ask "
+            f"(bid {c.get('implied_probability', 0)}c)",
+            f"Title: {c.get('title', 'N/A')}",
+            f"Ticker: {c.get('ticker', 'N/A')}",
+            f"Signal score: {cl.get('signal_score', 'N/A')}/100 ({cl.get('anomaly_type', '')})",
+            f"Last 24h: ${flow.get(f'taker_{side.lower()}_dollars', 0) or 0:,.0f} bought {side} vs "
+            f"${flow.get(f'taker_{other.lower()}_dollars', 0) or 0:,.0f} {other}; price "
+            f"{ev.get('signal_price_change_24h')}c",
+            f"Close date: {c.get('close_date', 'N/A')} ({opportunity.get('days_to_close')}d)",
+            f"Market data as of: {opportunity.get('market_data_at') or 'unknown'}",
+        ]
+        if cl.get("score_flags"):
+            lines.append("Warnings: " + "; ".join(cl["score_flags"]))
+        if cl.get("veto_reason"):
+            lines.append(f"Veto notes (against): {cl['veto_reason']}")
+        if cl.get("supporting_info"):
+            lines.append(f"Veto notes (for): {cl['supporting_info']}")
+        return "\n".join(lines)
+
     def format_notification(self, opportunity):
         """Format an opportunity into a human-readable notification message."""
+        if opportunity.get("routing") == "notify_signal":
+            return self.format_signal_notification(opportunity)
         c = opportunity.get("market_snapshot", opportunity.get("candidate", {}))
         cl = opportunity.get("classification", {})
         side = cl.get("high_confidence_side", "?")

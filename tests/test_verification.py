@@ -267,9 +267,13 @@ class VerificationTests(unittest.TestCase):
         self.entry["candidate"]["candidate_type"] = "volume_anomaly"
         self.entry["classification"]["classification"] = "STRONG"
         manager = OpportunityManager({"notified_cache": str(Path(self.tmp.name) / "notified.json")})
-        with patch.object(manager, "compute_edge", side_effect=RuntimeError("edge reached")):
-            with self.assertRaisesRegex(RuntimeError, "edge reached"):
-                manager.process([self.entry])
+        # Skips evidence verification AND edge calculation: anomalies are signals, not priced bets.
+        with patch.object(manager, "compute_edge", side_effect=AssertionError("anomalies have no edge")):
+            notify, logged = manager.process([self.entry])
+        self.assertEqual([o["routing"] for o in notify], ["notify_signal"], logged)
+        self.assertIsNone(notify[0]["edge_after_fees"])
+        self.assertIsNone(notify[0]["position_size_usd"])
+        self.assertIn("ANOMALY SIGNAL", manager.format_notification(notify[0]))
 
     def test_bad_timestamp_never_passes(self):
         for stamp in (None, "bad", "2026-01-01", now()[:19]):

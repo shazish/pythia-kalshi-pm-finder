@@ -21,7 +21,8 @@ Anomaly types produced:
 
 Lifetime volume says nothing about direction: every contract has one YES and one NO
 holder, so "implied dollars" per side is just volume x price. Direction comes only from
-taker flow.
+taker flow, measured in DOLLARS: a 3c contract and a 70c contract are not the same bet,
+so counting contracts makes cheap longshots look far more heavily bought than they are.
 """
 import json
 import math
@@ -72,10 +73,10 @@ def market_activity(market, now=None):
 
 
 def summarize_trades(trades, window_start, large_trade_dollars):
-    """Taker flow over the window: contracts each side's takers bought, and large trades."""
+    """Taker flow over the window: contracts and dollars each side's takers bought, and large trades."""
     side_contracts = {"yes": 0.0, "no": 0.0}
     side_dollars = {"yes": 0.0, "no": 0.0}
-    sizes, large = [], []
+    sizes, large = [], []  # sizes: dollars per trade
     for t in trades:
         when = _parse_time(t.get("created_time"))
         side = t.get("taker_side")
@@ -86,33 +87,41 @@ def summarize_trades(trades, window_start, large_trade_dollars):
         dollars = n * price
         side_contracts[side] += n
         side_dollars[side] += dollars
-        sizes.append(n)
+        sizes.append(dollars)
         if dollars >= large_trade_dollars:
             large.append({"side": side.upper(), "contracts": round(n, 2), "dollars": round(dollars, 2),
                           "price": round(price * 100, 1), "time": when.isoformat(),
                           "block": bool(t.get("is_block_trade"))})
     total = side_contracts["yes"] + side_contracts["no"]
+    total_dollars = side_dollars["yes"] + side_dollars["no"]
     sizes.sort(reverse=True)
-    lead = "yes" if side_contracts["yes"] >= side_contracts["no"] else "no"
+    lead = "yes" if side_dollars["yes"] >= side_dollars["no"] else "no"
+    lead_c = "yes" if side_contracts["yes"] >= side_contracts["no"] else "no"
     return {
         "taker_yes_contracts": round(side_contracts["yes"], 2),
         "taker_no_contracts": round(side_contracts["no"], 2),
         "taker_yes_dollars": round(side_dollars["yes"], 2),
         "taker_no_dollars": round(side_dollars["no"], 2),
         "total_contracts": round(total, 2),
+        "total_dollars": round(total_dollars, 2),
         "n_trades": len(sizes),
-        "flow_side": lead.upper() if total else None,
-        "flow_share": round(side_contracts[lead] / total, 3) if total else None,
-        # Share of contracts in the 5 biggest trades: high = one actor's view.
-        "top5_share": round(sum(sizes[:5]) / total, 3) if total else None,
+        # Direction and share are by money spent, not contract count.
+        "flow_side": lead.upper() if total_dollars else None,
+        "flow_share": round(side_dollars[lead] / total_dollars, 3) if total_dollars else None,
+        "flow_dollars": round(side_dollars[lead], 2),
+        "contract_side": lead_c.upper() if total else None,
+        "contract_share": round(side_contracts[lead_c] / total, 3) if total else None,
+        # Share of money in the 5 biggest trades: high = one actor's view.
+        "top5_share": round(sum(sizes[:5]) / total_dollars, 3) if total_dollars else None,
         "large_trades": sorted(large, key=lambda x: -x["dollars"])[:20],
     }
 
 
-def assign_signal(evidence, flow, activity, min_flow_contracts):
-    """Pick the candidate side from taker flow and label the anomaly type."""
+def assign_signal(evidence, flow, activity, min_signal_dollars):
+    """Pick the candidate side from taker flow and label the anomaly type.
+    Flow sets the side only when at least min_signal_dollars was spent on the leading side."""
     price_side = evidence["price_side"]
-    if flow and flow.get("total_contracts", 0) >= min_flow_contracts and flow.get("flow_side"):
+    if flow and (flow.get("flow_dollars") or 0) >= min_signal_dollars and flow.get("flow_side"):
         side = flow["flow_side"]
         anomaly_type = "favourite_accumulation" if side == price_side else "longshot_accumulation"
     else:
@@ -122,21 +131,40 @@ def assign_signal(evidence, flow, activity, min_flow_contracts):
     return side, anomaly_type, toward
 
 
+LADDER_STRIKES = {"greater", "less"}
+
+
 def mark_cotimed(candidates, window_minutes):
-    """Flag large trades that hit sibling markets of the same event within the window."""
+    """
+    Flag large trades that hit sibling markets of the same event within the window AND
+    point the same way: both markets are rungs of one number ladder ("above X" / "below X")
+    and the large trades are on the same side as both markets' signals. Buying several
+    named outcomes or buckets at once (Person of the Year, rate-decision buckets) is
+    spreading bets or hedging, not one confident view, so it never counts.
+    """
     by_event = defaultdict(list)
     for c in candidates:
         by_event[c.get("event_ticker")].append(c)
     window = timedelta(minutes=window_minutes)
+
+    def signal_trades(c):
+        side = c.get("high_confidence_side")
+        return [_parse_time(t["time"]) for t in c["anomaly_evidence"].get("flow", {}).get("large_trades", [])
+                if t.get("side") == side]
+
     for siblings in by_event.values():
         for c in siblings:
-            mine = [_parse_time(t["time"]) for t in c["anomaly_evidence"].get("flow", {}).get("large_trades", [])]
             hits = []
+            strike = c.get("strike_type")
+            if strike not in LADDER_STRIKES:
+                c["anomaly_evidence"]["cotimed_markets"] = hits
+                continue
+            mine = signal_trades(c)
             for other in siblings:
-                if other is c:
+                if other is c or other.get("strike_type") != strike \
+                        or other.get("high_confidence_side") != c.get("high_confidence_side"):
                     continue
-                theirs = [_parse_time(t["time"]) for t in
-                          other["anomaly_evidence"].get("flow", {}).get("large_trades", [])]
+                theirs = signal_trades(other)
                 if any(a and b and abs(a - b) <= window for a in mine for b in theirs):
                     hits.append(other["ticker"])
             c["anomaly_evidence"]["cotimed_markets"] = hits
@@ -210,9 +238,9 @@ class AnomalyScanner:
 
     def _compute_deltas(self, market, side, prior):
         """
-        Snapshot-cache deltas versus the previous scan, normalised per day.
-        Ignored when the snapshot is too old, undated, or the favoured side has flipped
-        (a price change measured across a flip is meaningless).
+        Snapshot-cache deltas versus the previous scan. price_delta is the change in the given
+        side's own bid (the signal side once flow is known). Ignored when the snapshot is too
+        old or undated.
         """
         empty = {"vol_delta": None, "vol_delta_pct": None, "oi_delta": None, "price_delta": None,
                  "oi_vol_ratio": None, "prior_age_hours": None}
@@ -224,7 +252,6 @@ class AnomalyScanner:
         age_h = (datetime.now(timezone.utc) - seen).total_seconds() / 3600
         if age_h > self.config["prior_max_age_hours"] or age_h <= 0:
             return {**empty, "prior_age_hours": round(age_h, 1)}
-        prev_side = "YES" if (prior.get("yes_bid") or 0) >= (prior.get("no_bid") or 0) else "NO"
         curr_vol = float(market.get("volume") or 0)
         prev_vol = float(prior.get("volume") or 0)
         curr_oi = float(market.get("open_interest") or 0)
@@ -238,9 +265,9 @@ class AnomalyScanner:
             "oi_vol_ratio": round(curr_oi / max(curr_vol, 1), 3),
             "prior_age_hours": round(age_h, 1),
         }
-        if prev_side == side:
-            prev_px = float(prior.get("yes_bid", 0) if side == "YES" else prior.get("no_bid", 0))
-            out["price_delta"] = round(self._hc_price(market, side) - prev_px, 1)
+        prev_px = prior.get("yes_bid") if side == "YES" else prior.get("no_bid")
+        if prev_px is not None:
+            out["price_delta"] = round(self._hc_price(market, side) - float(prev_px), 1)
         return out
 
     def _spread_ok(self, market, side):
@@ -364,6 +391,7 @@ class AnomalyScanner:
             "subtitle": market.get("subtitle", "") or event.get("sub_title", ""),
             "event_ticker": market.get("event_ticker", "") or event.get("event_ticker", ""),
             "series_ticker": market.get("series_ticker", "") or event.get("series_ticker", ""),
+            "strike_type": market.get("strike_type", ""),
             "category": event.get("category", ""),
             "yes_bid": market.get("yes_bid"),
             "yes_ask": market.get("yes_ask"),
@@ -392,19 +420,30 @@ class AnomalyScanner:
             "scanned_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    def _apply_flow(self, candidate, market):
-        """Fetch taker flow, then re-point the candidate at the side the flow backs."""
+    def _apply_flow(self, candidate, market, prior, flow=None):
+        """
+        Fetch taker flow, re-point the candidate at the side the flow backs, then compute
+        every side-specific field for that final side (so nothing describes the other side).
+        flow=None fetches it; pass a dict (e.g. a skip marker) to use it as-is.
+        """
         ev = candidate["anomaly_evidence"]
-        try:
-            flow = self._fetch_flow(candidate["ticker"])
-        except Exception as e:  # keep the candidate; it simply scores without flow
-            flow = {"error": f"{type(e).__name__}: {e}"[:200]}
+        if flow is None:
+            try:
+                flow = self._fetch_flow(candidate["ticker"])
+            except Exception as e:  # keep the candidate; it simply scores without flow
+                flow = {"error": f"{type(e).__name__}: {e}"[:200]}
         ev["flow"] = flow
-        ev["min_flow_contracts"] = self.config["min_flow_contracts"]
-        side, anomaly_type, toward = assign_signal(ev, flow, ev, self.config["min_flow_contracts"])
+        ev["min_signal_dollars"] = self.config["min_signal_dollars"]
+        side, anomaly_type, toward = assign_signal(ev, flow, ev, self.config["min_signal_dollars"])
         ev.update(anomaly_type=anomaly_type, high_confidence_side=side, signal_price_change_24h=toward)
+        ev.update(self._compute_deltas(market, side, prior))
         price = self._hc_price(market, side)
+        bid, ask = (market.get("yes_bid"), market.get("yes_ask")) if side == "YES" else \
+                   (market.get("no_bid"), market.get("no_ask"))
         ev["hc_price"] = int(price)
+        ev["signal_ask"] = ask
+        ev["signal_spread"] = (ask - (bid or 0)) if ask else None  # no bid = the whole ask is spread
+        ev["signal_side_dollars"] = (flow.get(f"taker_{side.lower()}_dollars") if "error" not in flow else None)
         candidate["high_confidence_side"] = side
         candidate["implied_probability"] = int(price)
 
@@ -452,8 +491,7 @@ class AnomalyScanner:
                     evidence = self._qualifies(m)
                     self._update_cache(ticker, m, category=cat)
                     if evidence:
-                        evidence.update(self._compute_deltas(m, evidence["price_side"], prior))
-                        found.append((self._enrich_candidate(m, event, evidence), m))
+                        found.append((self._enrich_candidate(m, event, evidence), m, prior))
 
             cursor = data.get("cursor")
             if not cursor:
@@ -470,12 +508,10 @@ class AnomalyScanner:
         # Taker flow for the most active markets first (bounded API cost).
         found.sort(key=lambda cm: (-(cm[0]["anomaly_evidence"].get("volume_24h") or 0)))
         limit = self.config["max_flow_candidates"]
-        for i, (cand, m) in enumerate(found):
-            if i < limit:
-                self._apply_flow(cand, m)
-            else:
-                cand["anomaly_evidence"]["flow"] = {"error": "skipped: max_flow_candidates reached"}
-        candidates = [c for c, _ in found]
+        for i, (cand, m, prior) in enumerate(found):
+            skip = None if i < limit else {"error": "skipped: max_flow_candidates reached"}
+            self._apply_flow(cand, m, prior, flow=skip)
+        candidates = [c for c, _, _ in found]
         mark_cotimed(candidates, self.config["cotimed_window_minutes"])
 
         types = defaultdict(int)

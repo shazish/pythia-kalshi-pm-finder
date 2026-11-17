@@ -26,11 +26,15 @@ WATCH_THRESHOLD  = 45
 
 # Flow-model thresholds. A clear directional burst (one-sided taker flow + volume spike
 # + price following) reaches STRONG on its first sighting; no snapshot history needed.
-FLOW_STRONG_THRESHOLD = 70   # calibrated 2026-11-16 on a full live scan: 28 of 308 candidates
+FLOW_STRONG_THRESHOLD = 70
 FLOW_WATCH_THRESHOLD  = 40
-MIN_FLOW_CONTRACTS    = 500
-MAX_SIGNAL_PRICE      = 85   # signal side above this: little upside left, flow is mostly position-closing
-REPRICED_MOVE         = 25   # a 24h move this large (cents) means the information is already in the price
+MIN_SIGNAL_DOLLARS    = 2000  # $ taker money on the signal side before flow is read (scanner records its config)
+MAX_SIGNAL_PRICE      = 85    # signal side above this: little upside left, flow is mostly position-closing
+REPRICED_MOVE         = 25    # a 24h move this large (cents) means the information is already in the price
+AGAINST_MOVE          = -3    # signal side fell this much (cents) in 24h while being bought: capped at WATCH
+MAX_SPREAD_RATIO      = 0.25  # spread above this share of the ask: buying costs too much, capped at WATCH
+# Few trades carrying most of the money = one actor's view, not a crowd.
+CONCENTRATION_PENALTIES = [(0.9, 15), (0.8, 8)]
 
 
 def _tier(score, strong, watch):
@@ -50,26 +54,28 @@ def score_flow(candidate: dict) -> dict:
     ev = candidate.get("anomaly_evidence", {})
     flow = ev.get("flow") or {}
     side = candidate.get("high_confidence_side") or ev.get("high_confidence_side")
-    breakdown, flags = {}, []
+    breakdown, flags, caps = {}, [], []
 
-    # 1. Flow direction (0-30): share of last-24h taker contracts on the signal side.
-    minimum = ev.get("min_flow_contracts", MIN_FLOW_CONTRACTS)  # scanner records its config value
-    readable = (flow.get("total_contracts") or 0) >= minimum and flow.get("flow_side") == side
+    # 1. Flow direction (0-30): share of last-24h taker MONEY on the signal side.
+    minimum = ev.get("min_signal_dollars", MIN_SIGNAL_DOLLARS)
+    signal_dollars = (flow.get(f"taker_{side.lower()}_dollars") if side else None) or 0
+    readable = flow.get("flow_side") == side and signal_dollars >= minimum
     share = flow.get("flow_share") if readable else None
     breakdown["flow_imbalance"] = _band(share, [(0.85, 30), (0.75, 22), (0.65, 14), (0.58, 6)])
     if not readable:
-        flags.append("flow unreadable (thin or missing trades)")
+        flags.append(f"flow unreadable (under ${minimum:,.0f} on the signal side, or missing trades)")
 
     # 2. Activity spike (0-20): last-24h volume vs the market's normal daily volume.
+    # Bands reach higher than before: most bursts are 10x+, so 10x no longer earns full points.
     if ev.get("is_new_market"):
         breakdown["volume_spike"] = 5
         flags.append("new market (no volume baseline)")
     else:
-        breakdown["volume_spike"] = _band(ev.get("volume_spike"), [(10, 20), (5, 15), (3, 10), (2, 5)])
+        breakdown["volume_spike"] = _band(ev.get("volume_spike"), [(50, 20), (20, 15), (10, 10), (5, 6), (3, 3)])
 
-    # 3. Recent size (0-15): contracts traded in 24h (each pays $1, so = $ notional).
-    breakdown["recent_size"] = _band(ev.get("volume_24h"),
-                                     [(100_000, 15), (25_000, 12), (10_000, 9), (2_500, 5), (1_000, 2)])
+    # 3. Recent size (0-15): dollars taker-bought on the signal side in 24h.
+    breakdown["recent_size"] = _band(signal_dollars if readable else 0,
+                                     [(50_000, 15), (20_000, 12), (10_000, 9), (5_000, 5), (2_000, 2)])
 
     # 4. Price response (0-15): 24h move of the signal side's price, in cents. Rising =
     # market starting to agree; flat = flow being absorbed (front-running); falling = 0.
@@ -83,11 +89,11 @@ def score_flow(candidate: dict) -> dict:
         pts = 15
     elif move >= 2:
         pts = 10
-    elif move > -2:
+    elif move > AGAINST_MOVE:
         pts = 6
     else:
         pts = 0
-        flags.append("price moving against the flow")
+        caps.append(f"price fell {move:+.0f}c in 24h while being bought")
     breakdown["price_response"] = pts
 
     # 5. Coordination (0-10): large trades hitting sibling markets of the same event within
@@ -107,17 +113,28 @@ def score_flow(candidate: dict) -> dict:
     d = candidate.get("days_to_close")
     breakdown["urgency"] = 0 if d is None else 5 if d < 7 else 4 if d < 30 else 2 if d < 90 else 0
 
-    if (flow.get("top5_share") or 0) >= 0.8:
-        flags.append("concentrated: 5 trades are >=80% of flow (one actor's view)")
+    # 8. Concentration penalty: the 5 biggest trades carry most of the money.
+    top5 = flow.get("top5_share") or 0
+    penalty = next((pts for minimum_share, pts in CONCENTRATION_PENALTIES if top5 >= minimum_share), 0)
+    breakdown["concentration_penalty"] = -penalty
+    if penalty:
+        flags.append(f"concentrated: 5 biggest trades are {top5:.0%} of the money (one actor's view), -{penalty}")
     if flow.get("truncated"):
         flags.append("trade history truncated")
 
-    score = min(sum(breakdown.values()), 100)
-    tier = _tier(score, FLOW_STRONG_THRESHOLD, FLOW_WATCH_THRESHOLD)
     price = candidate.get("implied_probability")
-    if tier == TIER_STRONG and price is not None and price > MAX_SIGNAL_PRICE:
+    if price is not None and price > MAX_SIGNAL_PRICE:
+        caps.append(f"signal side already at {price}c (> {MAX_SIGNAL_PRICE}c)")
+    spread, ask = ev.get("signal_spread"), ev.get("signal_ask")
+    if spread is not None and ask and spread / ask > MAX_SPREAD_RATIO:
+        caps.append(f"spread {spread:.0f}c is {spread / ask:.0%} of the {ask:.0f}c ask")
+
+    score = max(min(sum(breakdown.values()), 100), 0)
+    tier = _tier(score, FLOW_STRONG_THRESHOLD, FLOW_WATCH_THRESHOLD)
+    if tier == TIER_STRONG and caps:
         tier = TIER_WATCH  # visible, never actionable
-        flags.append(f"signal side already at {price}c (> {MAX_SIGNAL_PRICE}c): capped at WATCH")
+    flags.extend(f"{c}: capped at WATCH" if tier == TIER_WATCH and score >= FLOW_STRONG_THRESHOLD else c
+                 for c in caps)
     return {"signal_score": score, "score_breakdown": breakdown, "tier": tier,
             "strong_threshold": FLOW_STRONG_THRESHOLD, "watch_threshold": FLOW_WATCH_THRESHOLD,
             "model": "flow", "flags": flags}
@@ -195,5 +212,5 @@ def score_anomaly(candidate: dict) -> dict:
 
 def format_score_breakdown(breakdown: dict) -> str:
     """Human-readable score breakdown for reporting."""
-    parts = [f"{k}={v}" for k, v in breakdown.items() if v > 0]
+    parts = [f"{k}={v}" for k, v in breakdown.items() if v]
     return " | ".join(parts) if parts else "no signal"

@@ -677,13 +677,17 @@ Run:
 
 This routes each anomaly candidate through Classifier._classify_anomaly():
   1. Score via anomaly_scorer.score_anomaly() → STRONG / WATCH / SKIP
-     Kalshi candidates use the flow model: last-24h taker flow direction, volume spike vs
-     normal, price response, cross-strike coordination. The candidate side is the side the
-     flow backs (may be the cheaper longshot). Signal side >85c or already repriced is capped.
+     Kalshi candidates use the flow model: last-24h taker flow direction and size IN DOLLARS
+     (min $2k on the signal side), volume spike vs normal, price response, same-side big
+     trades on sibling ladder strikes, minus a penalty when a few trades carry the money.
+     The candidate side is the side the money backs (may be the cheaper longshot).
+     Capped at WATCH: signal side >85c, price falling while bought, spread >25% of ask.
   2. WATCH/SKIP: no veto (a veto can only lower a tier; neither is actionable)
   3. STRONG: veto looks for reasons the flow is noise (event concluded, hedge,
-     market-making/arbitrage). A confident veto caps the tier at WATCH. A missing or
-     invalid veto marks the entry "veto unavailable" and it is not actioned.
+     market-making/arbitrage) or strong concrete public evidence against the signal side.
+     A confident veto caps the tier at WATCH. A missing or invalid veto marks the entry
+     "veto unavailable" and it is not actioned.
+  Finalize reports STRONG anomalies as signals to review: no edge or position size.
 Results saved to {LOGS_DIR}/{run_dir}/classified.json
 """ + (f"""
 --model given: the veto runs inside classify_all.py on {model_override} (one retry).

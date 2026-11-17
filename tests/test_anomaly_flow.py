@@ -23,8 +23,10 @@ def trade(side, n, yes_price, minutes_ago, block=False):
             "is_block_trade": block}
 
 
-def raw_market(ticker, yes_bid, volume, volume_24h, prev, last, age_days=28, close_days=20, event="KXRT-VIO"):
+def raw_market(ticker, yes_bid, volume, volume_24h, prev, last, age_days=28, close_days=20, event="KXRT-VIO",
+               strike_type="greater"):
     return {"ticker": ticker, "event_ticker": event, "series_ticker": "KXRT", "title": "Violent Night 2 RT score?",
+            "strike_type": strike_type,
             "yes_bid_dollars": f"{yes_bid / 100:.2f}", "yes_ask_dollars": f"{(yes_bid + 1) / 100:.2f}",
             "no_bid_dollars": f"{(99 - yes_bid) / 100:.2f}", "no_ask_dollars": f"{(100 - yes_bid) / 100:.2f}",
             "volume_fp": str(volume), "volume_24h_fp": str(volume_24h), "open_interest_fp": "15000",
@@ -32,6 +34,9 @@ def raw_market(ticker, yes_bid, volume, volume_24h, prev, last, age_days=28, clo
             "close_time": iso(NOW + timedelta(days=close_days)), "created_time": iso(NOW - timedelta(days=age_days)),
             "status": "active", "rules_primary": "Resolves Yes if the Tomatometer is above the strike."}
 
+
+# Many separate buyers taking YES on KXRT-VIO-60, minutes apart from the big VIO-50 YES trades.
+CROWD_TRADES = [trade("yes", 2000 + 150 * i, 0.40, 395 + i) for i in range(20)] + [trade("no", 300, 0.40, 300)]
 
 # The Nov 16 2026 KXRT-VIO pattern: one buyer took YES on both strikes within a minute.
 VIO_TRADES = {
@@ -75,7 +80,10 @@ class AnomalyFlowTests(unittest.TestCase):
         self.assertEqual(flow["flow_side"], "YES")
         self.assertAlmostEqual(flow["taker_yes_contracts"], 14556, places=0)
         self.assertAlmostEqual(flow["taker_no_contracts"], 570, places=0)  # 900 NO is outside window
-        self.assertGreater(flow["flow_share"], 0.95)
+        self.assertGreater(flow["contract_share"], 0.95)
+        # Share is by money: YES bought at 17-26c, NO at 73c.
+        self.assertAlmostEqual(flow["flow_share"], 2610 / (2610 + 416), places=2)
+        self.assertAlmostEqual(flow["flow_dollars"], 2610, places=-1)
         self.assertTrue(all(t["dollars"] >= 500 for t in flow["large_trades"]))
         self.assertEqual(flow["large_trades"][0]["side"], "YES")
 
@@ -96,7 +104,9 @@ class AnomalyFlowTests(unittest.TestCase):
                                            {"yes_change_24h": 6.0}, 500)
         self.assertEqual((side, kind, toward), ("NO", "volume_only", -6.0))
 
-    def test_vio_pattern_is_found_pointed_at_yes_and_strong(self):
+    def test_vio_single_buyer_is_found_but_not_strong(self):
+        # One buyer, ~$2.6k across three trades: found and pointed at YES, but a single
+        # actor's view is penalised and stays below STRONG.
         markets = [raw_market("KXRT-VIO-75", 22, 22335, 16320, 17, 23),
                    raw_market("KXRT-VIO-50", 78, 17027, 13779, 67, 78)]
         found, _ = self.scan(markets, VIO_TRADES)
@@ -105,17 +115,57 @@ class AnomalyFlowTests(unittest.TestCase):
         self.assertEqual(c["high_confidence_side"], "YES")
         self.assertEqual(c["implied_probability"], 22)
         self.assertEqual(ev["anomaly_type"], "longshot_accumulation")
-        self.assertEqual(ev["cotimed_markets"], ["KXRT-VIO-50"])
+        self.assertEqual(ev["cotimed_markets"], ["KXRT-VIO-50"])  # same-side YES on one ladder
         scored = score_anomaly(c)
         self.assertEqual(scored["model"], "flow")
-        self.assertEqual(scored["tier"], "STRONG", scored)
-        self.assertIn("concentrated", " ".join(scored["flags"]))
+        self.assertEqual(scored["score_breakdown"]["concentration_penalty"], -15)
+        self.assertNotEqual(scored["tier"], "STRONG", scored)
         self.assertEqual(found["KXRT-VIO-50"]["anomaly_evidence"]["anomaly_type"], "favourite_accumulation")
+
+    def test_crowd_buying_is_strong(self):
+        markets = [raw_market("KXRT-VIO-60", 40, 40000, 36000, 35, 40),
+                   raw_market("KXRT-VIO-50", 78, 17027, 13779, 67, 78)]
+        found, _ = self.scan(markets, {"KXRT-VIO-60": CROWD_TRADES, **VIO_TRADES})
+        c = found["KXRT-VIO-60"]
+        self.assertEqual(c["high_confidence_side"], "YES")
+        self.assertEqual(c["anomaly_evidence"]["cotimed_markets"], ["KXRT-VIO-50"])
+        scored = score_anomaly(c)
+        self.assertEqual(scored["tier"], "STRONG", scored)
+        self.assertEqual(scored["score_breakdown"]["concentration_penalty"], 0)
+
+    def test_contract_majority_is_not_direction(self):
+        # 82% of contracts are cheap YES, but most of the money bought NO (Fed H0, Nov 16).
+        trades = [trade("yes", 20000, 0.05, 30), trade("no", 3000, 0.05, 20), trade("no", 1500, 0.05, 10)]
+        flow = summarize_trades(trades, NOW - timedelta(hours=24), 500)
+        self.assertEqual(flow["contract_side"], "YES")
+        self.assertEqual(flow["flow_side"], "NO")
+
+    def test_small_money_does_not_set_side(self):
+        # 50,000 contracts at 2c = $1,000: below the $2,000 minimum, so flow is not read.
+        flow = summarize_trades([trade("no", 50000, 0.98, 30)], NOW - timedelta(hours=24), 500)
+        side, kind, _ = assign_signal({"price_side": "YES"}, flow, {}, 2000)
+        self.assertEqual((side, kind), ("YES", "volume_only"))
+
+    def test_price_falling_while_bought_is_capped(self):
+        markets = [raw_market("KXRT-VIO-60", 40, 40000, 36000, 52, 40)]  # YES fell 12c
+        found, _ = self.scan(markets, {"KXRT-VIO-60": CROWD_TRADES})
+        scored = score_anomaly(found["KXRT-VIO-60"])
+        self.assertEqual(scored["tier"], "WATCH", scored)
+        self.assertIn("price fell", " ".join(scored["flags"]))
+
+    def test_wide_spread_relative_to_price_is_capped(self):
+        m = raw_market("KXRT-VIO-60", 40, 40000, 36000, 35, 40)
+        m["yes_bid_dollars"], m["yes_ask_dollars"] = "0.15", "0.24"   # 9c spread on a 24c ask
+        m["no_bid_dollars"], m["no_ask_dollars"] = "0.76", "0.85"
+        found, _ = self.scan([m], {"KXRT-VIO-60": [trade("yes", 3000 + 100 * i, 0.20, 30 + i) for i in range(20)]})
+        scored = score_anomaly(found["KXRT-VIO-60"])
+        self.assertNotEqual(scored["tier"], "STRONG", scored)
+        self.assertIn("spread 9c", " ".join(scored["flags"]))
 
     def test_activity_gate_admits_cheap_longshot_outside_favourite_window(self):
         # YES at 8c: the favoured side (NO 91c) is outside the 20-79c favourite window.
-        markets = [raw_market("KXLONG-1", 8, 30000, 12000, 5, 9)]
-        found, _ = self.scan(markets, {"KXLONG-1": [trade("yes", 6000, 0.08, 30), trade("yes", 3000, 0.09, 10),
+        markets = [raw_market("KXLONG-1", 8, 60000, 32000, 5, 9)]
+        found, _ = self.scan(markets, {"KXLONG-1": [trade("yes", 25000, 0.08, 30), trade("yes", 3000, 0.09, 10),
                                                     trade("no", 400, 0.08, 20)]})
         c = found["KXLONG-1"]
         self.assertEqual(c["anomaly_evidence"]["gates"], ["activity"])
@@ -132,7 +182,7 @@ class AnomalyFlowTests(unittest.TestCase):
 
     def test_balanced_flow_is_not_strong(self):
         markets = [raw_market("KXBAL", 30, 50000, 20000, 30, 30)]
-        trades = [trade("yes", 5000, 0.30, 50), trade("no", 5200, 0.30, 40)]
+        trades = [trade("yes", 7000, 0.30, 50), trade("no", 3000, 0.30, 40)]  # $2,100 each side
         found, _ = self.scan(markets, {"KXBAL": trades})
         self.assertEqual(score_anomaly(found["KXBAL"])["score_breakdown"]["flow_imbalance"], 0)
         self.assertNotEqual(score_anomaly(found["KXBAL"])["tier"], "STRONG")
@@ -158,19 +208,32 @@ class AnomalyFlowTests(unittest.TestCase):
         self.assertIsNone(scanner._compute_deltas(m, "YES", old)["oi_delta"])
         flipped = {**old, "last_seen": (NOW - timedelta(hours=12)).isoformat()}
         d = scanner._compute_deltas(m, "YES", flipped)
-        self.assertIsNone(d["price_delta"])        # favoured side flipped NO -> YES
+        self.assertEqual(d["price_delta"], 50.0)   # YES's own bid 10c -> 60c, even though the favourite flipped
         self.assertIsNotNone(d["oi_delta"])
         same = {**flipped, "yes_bid": 55, "no_bid": 44}
         self.assertEqual(scanner._compute_deltas(m, "YES", same)["price_delta"], 5.0)
 
-    def test_cotimed_requires_close_timing(self):
-        def cand(t, minutes):
-            return {"ticker": t, "event_ticker": "E", "anomaly_evidence": {"flow": {"large_trades": [
-                {"time": (NOW - timedelta(minutes=minutes)).isoformat()}]}}}
+    def test_cotimed_requires_close_timing_same_side_and_ladder(self):
+        def cand(t, minutes, side="YES", strike="greater", trade_side=None):
+            return {"ticker": t, "event_ticker": "E", "strike_type": strike, "high_confidence_side": side,
+                    "anomaly_evidence": {"flow": {"large_trades": [
+                        {"side": trade_side or side, "time": (NOW - timedelta(minutes=minutes)).isoformat()}]}}}
         a, b, c = cand("A", 100), cand("B", 105), cand("C", 300)
         mark_cotimed([a, b, c], 15)
         self.assertEqual(a["anomaly_evidence"]["cotimed_markets"], ["B"])
         self.assertEqual(c["anomaly_evidence"]["cotimed_markets"], [])
+        # Opposite signal sides on one ladder: not one view.
+        a, b = cand("A", 100), cand("B", 105, side="NO")
+        mark_cotimed([a, b], 15)
+        self.assertEqual(a["anomaly_evidence"]["cotimed_markets"], [])
+        # Big trade on the other side of the signal does not count.
+        a, b = cand("A", 100), cand("B", 105, trade_side="NO")
+        mark_cotimed([a, b], 15)
+        self.assertEqual(a["anomaly_evidence"]["cotimed_markets"], [])
+        # Named outcomes (Person of the Year, decision buckets): buying several is spreading bets.
+        a, b = cand("A", 100, strike="custom"), cand("B", 105, strike="custom")
+        mark_cotimed([a, b], 15)
+        self.assertEqual(a["anomaly_evidence"]["cotimed_markets"], [])
 
     def test_legacy_falling_price_is_not_accumulation(self):
         base = {"anomaly_evidence": {"implied_hc_dollars": 20000, "hc_to_opp_ratio": 2.0,
@@ -181,7 +244,7 @@ class AnomalyFlowTests(unittest.TestCase):
 
     def test_near_certain_signal_side_is_capped_at_watch(self):
         markets = [raw_market("KXHUN", 96, 50000, 40000, 93, 96)]
-        found, _ = self.scan(markets, {"KXHUN": [trade("yes", 20000, 0.96, 30), trade("yes", 15000, 0.96, 20)]})
+        found, _ = self.scan(markets, {"KXHUN": [trade("yes", 2000, 0.96, 30 + i) for i in range(20)]})
         scored = score_anomaly(found["KXHUN"])
         self.assertEqual(scored["tier"], "WATCH")
         self.assertIn("capped at WATCH", " ".join(scored["flags"]))
@@ -199,13 +262,13 @@ class AnomalyFlowTests(unittest.TestCase):
 
 class VetoTests(unittest.TestCase):
     def strong_candidate(self):
-        markets = [raw_market("KXRT-VIO-75", 22, 22335, 16320, 17, 23),
+        markets = [raw_market("KXRT-VIO-60", 40, 40000, 36000, 35, 40),
                    raw_market("KXRT-VIO-50", 78, 17027, 13779, 67, 78)]
         with tempfile.TemporaryDirectory() as tmp:
             config = {"cache_file": str(Path(tmp) / "c.json"), "candidates_file": str(Path(tmp) / "d.json")}
             events = [{"event_ticker": "KXRT-VIO", "category": "Entertainment", "markets": markets}]
-            scanner = AnomalyScanner(config, client=FakeClient(events, VIO_TRADES))
-            return next(c for c in scanner.scan() if c["ticker"] == "KXRT-VIO-75")
+            scanner = AnomalyScanner(config, client=FakeClient(events, {"KXRT-VIO-60": CROWD_TRADES, **VIO_TRADES}))
+            return next(c for c in scanner.scan() if c["ticker"] == "KXRT-VIO-60")
 
     def classify(self, replies):
         from step_3_classification.classifier import Classifier
@@ -257,24 +320,24 @@ class VetoTests(unittest.TestCase):
     PROV = {"method": "agent", "model": "fixture-model", "harness": "test"}
 
     def test_apply_clear_reply_makes_strong_actionable(self):
-        cl = self.run_apply({"KXRT-VIO-75": json.dumps({"vetoed": False, "veto_reason": "", "veto_confidence": 0,
+        cl = self.run_apply({"KXRT-VIO-60": json.dumps({"vetoed": False, "veto_reason": "", "veto_confidence": 0,
                                                         "supporting_info": "Reviews out", "_model_provenance": self.PROV})})
         self.assertTrue(cl["_valid"])
         self.assertEqual(cl["classification"], "STRONG")
         self.assertEqual(cl["_veto_provenance"]["model"], "fixture-model")
 
     def test_apply_veto_caps_at_watch(self):
-        cl = self.run_apply({"KXRT-VIO-75": json.dumps({"vetoed": True, "veto_reason": "Event concluded",
+        cl = self.run_apply({"KXRT-VIO-60": json.dumps({"vetoed": True, "veto_reason": "Event concluded",
                                                         "veto_confidence": 85, "supporting_info": "",
                                                         "_model_provenance": self.PROV})})
         self.assertEqual(cl["classification"], "WATCH")
         self.assertFalse(cl["_valid"])
 
     def test_apply_missing_or_invalid_reply_is_unavailable(self):
-        for replies in ({}, {"KXRT-VIO-75": "{not json"},
-                        {"KXRT-VIO-75": json.dumps({"vetoed": True, "veto_reason": "x", "veto_confidence": 20,
+        for replies in ({}, {"KXRT-VIO-60": "{not json"},
+                        {"KXRT-VIO-60": json.dumps({"vetoed": True, "veto_reason": "x", "veto_confidence": 20,
                                                     "_model_provenance": self.PROV})},
-                        {"KXRT-VIO-75": json.dumps({"vetoed": False, "veto_reason": "", "veto_confidence": 0})}):
+                        {"KXRT-VIO-60": json.dumps({"vetoed": False, "veto_reason": "", "veto_confidence": 0})}):
             with self.subTest(replies=list(replies.values())[:1]):
                 cl = self.run_apply(replies)
                 self.assertTrue(cl["veto_unavailable"])
@@ -293,7 +356,8 @@ class VetoTests(unittest.TestCase):
                                                          "supporting_info": "Early reviews are positive."})])
         self.assertTrue(result["_valid"])
         self.assertFalse(result["veto_unavailable"])
-        self.assertEqual(result["recent_developments"], "Early reviews are positive.")
+        self.assertEqual(result["supporting_info"], "Early reviews are positive.")
+        self.assertEqual(result["recent_developments"], "")  # veto notes are not "recent developments"
         self.assertEqual(result["anomaly_type"], "longshot_accumulation")
 
     def test_confident_veto_drops_tier(self):
@@ -307,6 +371,7 @@ class VetoTests(unittest.TestCase):
         prompt = build_anomaly_veto_prompt(self.strong_candidate(), recency_days=14)
         self.assertIn("SIGNAL SIDE: YES", prompt)
         self.assertIn("longshot_accumulation", prompt)
+        self.assertIn("on YES vs $", prompt)  # dollar flow, not just contracts
         self.assertIn("KXRT-VIO-50", prompt)
 
 

@@ -58,6 +58,9 @@ func (r row) edgeExplanation() string {
 	if !r.Finalized {
 		return "Not available in this classification archive: finalized edge values were not saved here. LIKELY/UNCLEAR results are skipped before edge calculation; other rows require the finalized report to determine why edge is missing."
 	}
+	if r.Routing == "notify_signal" {
+		return "Not calculated by design: anomaly signals have a signal score, not a win-probability estimate, so no edge or size is computed."
+	}
 	if r.Routing == "skipped_not_certain" {
 		return "Not calculated: this result did not meet the classification threshold for edge calculation."
 	}

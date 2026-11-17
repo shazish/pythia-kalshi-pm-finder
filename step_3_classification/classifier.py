@@ -294,6 +294,7 @@ Veto (vetoed=true) only for explanations that make the flow non-informative:
 2. Hedging: the buying offsets a correlated position or brackets a scheduled event (central bank meeting, report release, vote), not a view on this outcome
 3. Market-making or arbitrage: balanced two-sided activity, or mechanical rebalancing across sibling strikes of the same event
 4. A settlement technicality makes the signal side unable to win
+5. Strong, specific, recent public evidence that the signal side will lose: an official announcement, published data, or a confirmed date/decision that directly contradicts it (for example, the company reaffirmed the launch date days before the market closes while the flow bets on a delay). Opinions, forecasts, and "it seems unlikely" do NOT count — the evidence must be concrete and cited in veto_reason.
 
 Do NOT veto because public news SUPPORTS the signal side. Supportive news means the price may be lagging reality, which strengthens the signal; report it in supporting_info instead.
 
@@ -303,6 +304,7 @@ Do NOT veto based on:
 - Theoretical possibilities with no real-world evidence
 
 If you cannot find a clear, specific explanation of the kinds above — output vetoed=false.
+supporting_info is for evidence that SUPPORTS the signal side. If you found evidence against it that is not strong enough to veto, put it in veto_reason with vetoed=false.
 
 Output ONLY valid JSON matching this exact schema (keep every string under 300 characters):
 {"vetoed": false, "veto_reason": "", "veto_confidence": 0, "supporting_info": ""}
@@ -323,9 +325,10 @@ def build_anomaly_veto_prompt(candidate: dict, recency_days: int = None) -> str:
     flow     = evidence.get("flow") or {}
 
     if flow.get("total_contracts"):
-        signal = (f"{evidence.get('anomaly_type', '')}: last 24h takers bought "
-                  f"YES {flow.get('taker_yes_contracts', 0):,.0f} vs NO {flow.get('taker_no_contracts', 0):,.0f} "
-                  f"contracts ({(flow.get('flow_share') or 0):.0%} on {flow.get('flow_side')}); "
+        signal = (f"{evidence.get('anomaly_type', '')}: last 24h takers spent "
+                  f"${flow.get('taker_yes_dollars', 0):,.0f} on YES vs ${flow.get('taker_no_dollars', 0):,.0f} on NO "
+                  f"({(flow.get('flow_share') or 0):.0%} of the money on {flow.get('flow_side')}; "
+                  f"{flow.get('taker_yes_contracts', 0):,.0f} vs {flow.get('taker_no_contracts', 0):,.0f} contracts); "
                   f"24h volume {evidence.get('volume_24h', 0):,.0f} = {evidence.get('volume_spike') or 'n/a'}x normal; "
                   f"{side} price change 24h: {evidence.get('signal_price_change_24h')}c; "
                   f"top-5 trades = {(flow.get('top5_share') or 0):.0%} of flow")
@@ -339,7 +342,7 @@ def build_anomaly_veto_prompt(candidate: dict, recency_days: int = None) -> str:
 
 TITLE: {candidate.get('title', 'N/A')} {candidate.get('subtitle', '') or ''}
 TICKER: {candidate.get('ticker', 'N/A')}
-SIGNAL SIDE: {side} @ {prob}c
+SIGNAL SIDE: {side} @ {prob}c bid / {evidence.get('signal_ask', '?')}c ask
 SIGNAL: {signal}
 DAYS TO CLOSE: {days}
 SETTLEMENT RULES: {(candidate.get('rules_primary') or '')[:400]}
@@ -350,6 +353,7 @@ Search for any public explanation that makes this buying NON-directional noise (
 Perform at least 2 searches before deciding.
 Search 1: "{candidate.get('title', '')} news [current month year]" — recent developments, and whether the outcome is already known
 Search 2: Is there a hedge, scheduled event, or cross-strike arbitrage that explains buying {side}?
+Search 3: Is there an official announcement, published data, or confirmed decision that says {side} will lose?
 
 Output ONLY the JSON schema specified. vetoed=false if no clear explanation found."""
 
@@ -435,7 +439,6 @@ def apply_anomaly_veto(result: dict, reply, error: str = None, provenance: dict 
         result.update(vetoed=reply["vetoed"], veto_confidence=reply["veto_confidence"],
                       veto_reason=reply.get("veto_reason", "")[:300],
                       supporting_info=reply.get("supporting_info", "")[:300], veto_unavailable=False)
-        result["recent_developments"] = result["supporting_info"]
         if reply["vetoed"]:
             score = max(result["signal_score"] - 20, 0)
             tier = "WATCH" if score >= result.get("_watch_threshold", 40) else "SKIP"
