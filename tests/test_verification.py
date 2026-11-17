@@ -19,6 +19,8 @@ class VerificationTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.policy = load_policy()
+        # Most tests exercise one signal; tier/count rules are tested with explicit minimums.
+        self.policy["min_verified_signals"] = 1
         self.calls = []
         def fetch(url):
             self.calls.append(url)
@@ -39,14 +41,28 @@ class VerificationTests(unittest.TestCase):
         return verify_entry(self.entry, self.research, self.policy, self.cache, reviews or {})
 
     def review(self, **changes):
-        initial = self.verify()
-        key = initial["checks"][0]["review_id"]
-        record = {"reviewer": "fixture-reviewer", "reviewed_at": now(), "verdict": "supported",
-                  "excerpt": TEXT.split(".")[0] + ".", "settlement_match": True,
-                  "time_relevant": True, "article_accessible": True,
-                  "reason": "Exact metric, period, threshold and entity match the rules."}
-        record.update(changes)
-        return {key: record}
+        """Supported, decisive review for every reviewable check (excerpt from that check's page)."""
+        reviews = {}
+        for check in self.verify()["checks"]:
+            if not check.get("review_id"):
+                continue
+            text = self.cache.get(check["url"])["text"]
+            record = {"reviewer": "fixture-reviewer", "reviewed_at": now(), "verdict": "supported",
+                      "excerpt": text.split(".")[0] + ".", "settlement_match": True,
+                      "time_relevant": True, "article_accessible": True, "decisive": True,
+                      "reason": "Exact metric, period, threshold and entity match the rules."}
+            record.update(changes)
+            reviews[check["review_id"]] = record
+        return reviews
+
+    def use_signals(self, pages):
+        """Replace signals with one per (url, page text); every url is in research and fetchable."""
+        texts = dict(pages)
+        self.cache.fetcher = lambda url: {"final_url": url, "text": texts[url], "http_status": 200}
+        self.entry["classification"]["confirming_signals"] = [
+            {"fact": f"Final result is 42 units (source {i}).", "source_url": url}
+            for i, (url, _) in enumerate(pages)]
+        self.research = {"findings": [{"url": url} for url, _ in pages]}
 
     def test_trusted_domain_does_not_prove_claim(self):
         self.assertEqual(self.verify()["status"], "unverifiable")
@@ -68,7 +84,10 @@ class VerificationTests(unittest.TestCase):
         self.policy["blocked_domains"] = ["nytimes.com"]
         self.policy["resolution_domains_by_ticker"] = {"TEST": ["nytimes.com"]}
         self.assertEqual(source_category(URL, "TEST", self.policy), "blocked")
-        self.assertEqual(self.verify()["status"], "unverifiable")
+        report = self.verify()
+        self.assertEqual(report["checks"][0]["status"], "ignored")
+        self.assertEqual(report["status"], "downgraded")  # nothing left to confirm the claim
+        self.assertFalse(verification_passes(*self.entry.values(), policy=self.policy))
         self.assertEqual(self.calls, [])
 
     def test_resolution_policy_is_per_contract(self):
@@ -87,10 +106,20 @@ class VerificationTests(unittest.TestCase):
     def test_explicit_contradiction_is_distinct_from_missing_evidence(self):
         self.assertEqual(self.verify(self.review(verdict="contradicted"))["status"], "contradicted")
 
-    def test_fetch_failure_is_unverifiable(self):
+    def test_fetch_failure_needs_review(self):
         self.cache.fetcher = lambda url: (_ for _ in ()).throw(TimeoutError("timeout"))
-        self.assertEqual(self.verify()["status"], "unverifiable")
-        self.assertIn("timeout", self.verify()["checks"][0]["reason"])
+        report = self.verify()
+        self.assertEqual(report["status"], "needs_review")
+        self.assertEqual(report["checks"][0]["status"], "fetch_failed")
+        self.assertIn("timeout", report["checks"][0]["reason"])
+        self.assertFalse(verification_passes(*self.entry.values(), policy=self.policy))
+
+    def test_failed_content_check_outranks_fetch_failure(self):
+        good, bad = "https://www.nytimes.com/a", "https://www.reuters.com/b"
+        self.use_signals([(good, TEXT), (bad, TEXT)])
+        self.cache.fetcher = lambda url: ({"final_url": url, "text": TEXT, "http_status": 200}
+                                          if url == good else (_ for _ in ()).throw(TimeoutError("403")))
+        self.assertEqual(self.verify()["status"], "unverifiable")  # good URL has no review yet
 
     def test_changed_claim_rules_policy_invalidate_review(self):
         reviews = self.review()
@@ -147,12 +176,66 @@ class VerificationTests(unittest.TestCase):
         self.cache.fetcher = lambda url: {"final_url": "https://unknown.example/article",
                                          "text": TEXT, "http_status": 200}
         self.assertEqual(self.verify()["status"], "unverifiable")
+        report = self.verify(self.review())
+        self.assertEqual(report["checks"][0]["tier"], "semi")
+        self.assertEqual(report["status"], "downgraded")
 
-    def test_unknown_domain_needs_corroboration(self):
-        url = "https://unknown.example/article"
-        self.entry["classification"]["confirming_signals"][0]["source_url"] = url
-        self.research = {"findings": [{"url": url}]}
-        self.assertIn("corroboration", self.verify()["checks"][0]["reason"])
+    def test_single_semi_reliable_source_downgrades(self):
+        self.use_signals([("https://unknown.example/article", TEXT)])
+        report = self.verify(self.review())
+        self.assertEqual(report["checks"][0]["tier"], "semi")
+        self.assertEqual(report["status"], "downgraded")
+        self.assertIn("single semi-reliable", report["reason"])
+
+    def test_two_independent_semi_sources_verify(self):
+        self.use_signals([("https://alpha.example/a", TEXT),
+                          ("https://beta.example/b", "Officials confirmed the final tally reached 42 units for the period. " * 3)])
+        report = self.verify(self.review())
+        self.assertEqual(report["status"], "verified", report)
+        self.assertTrue(verification_passes(*self.entry.values(), policy=self.policy))
+
+    def test_semi_sources_from_same_publisher_are_not_independent(self):
+        self.use_signals([("https://news.alpha.example/a", TEXT),
+                          ("https://www.alpha.example/b", "Officials confirmed the final tally reached 42 units for the period. " * 3)])
+        self.assertEqual(self.verify(self.review())["status"], "downgraded")
+
+    def test_syndicated_copy_is_not_independent(self):
+        self.use_signals([("https://alpha.example/a", TEXT), ("https://beta.example/b", TEXT)])
+        self.assertEqual(self.verify(self.review())["status"], "downgraded")
+
+    def test_supporting_but_not_decisive_tier1_downgrades(self):
+        self.assertEqual(self.verify(self.review(decisive=False))["status"], "downgraded")
+
+    def test_blocked_sources_ignored_but_count_rule_applies(self):
+        self.policy["min_verified_signals"] = 3
+        self.policy["blocked_domains"] = ["polymarket.com"]
+        pages = [(f"https://www.nytimes.com/{i}", TEXT) for i in range(3)]
+        self.use_signals(pages + [("https://polymarket.com/event/x", TEXT)])
+        report = self.verify(self.review())
+        self.assertEqual([c["status"] for c in report["checks"]], ["verified"] * 3 + ["ignored"])
+        self.assertEqual(report["status"], "verified")
+        self.assertTrue(verification_passes(*self.entry.values(), policy=self.policy))
+        self.use_signals(pages[:2] + [("https://polymarket.com/event/x", TEXT)])
+        report = self.verify(self.review())
+        self.assertEqual(report["status"], "downgraded")
+        self.assertIn("Only 2", report["reason"])
+
+    def test_policy_rejects_bad_minimum(self):
+        path = Path(self.tmp.name) / "policy.json"
+        for value in (0, 11, "3", 2.5):
+            path.write_text(json.dumps({**self.policy, "min_verified_signals": value}))
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                load_policy(path)
+
+    def test_needs_review_is_routed_and_labelled_separately(self):
+        self.cache.fetcher = lambda url: (_ for _ in ()).throw(TimeoutError("403"))
+        self.verify()
+        manager = OpportunityManager({"notified_cache": str(Path(self.tmp.name) / "notified.json")})
+        with patch("step_5_finalize.opportunity_manager.verification_passes", return_value=False):
+            _, logged = manager.process([self.entry])
+        self.assertEqual(logged[0]["routing"], "skipped_evidence_needs_review")
+        from step_5_finalize.excel_reporter import _extract_near_misses
+        self.assertIn("NEEDS REVIEW", _extract_near_misses(logged)[0]["_opportunity_status"])
 
     def test_flat_format(self):
         self.entry = {**self.entry["candidate"], **self.entry["classification"]}
@@ -172,7 +255,9 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(logged[0]["routing"], "skipped_evidence_unverified")
 
     def test_verified_opportunity_reaches_edge_calculation(self):
-        self.verify(self.review())
+        self.policy = load_policy()  # finalize checks against the real policy file
+        self.use_signals([(f"https://www.nytimes.com/{i}", TEXT) for i in range(3)])
+        self.assertEqual(self.verify(self.review())["status"], "verified")
         manager = OpportunityManager({"notified_cache": str(Path(self.tmp.name) / "notified.json")})
         with patch.object(manager, "compute_edge", side_effect=RuntimeError("edge reached")):
             with self.assertRaisesRegex(RuntimeError, "edge reached"):
@@ -195,7 +280,9 @@ class VerificationTests(unittest.TestCase):
         import sys
         run = Path(self.tmp.name) / "run"
         run.mkdir()
-        self.cache.get(URL)
+        self.use_signals([(f"https://www.nytimes.com/{i}", TEXT) for i in range(3)])  # file policy needs 3
+        for signal in self.entry["classification"]["confirming_signals"]:
+            self.cache.get(signal["source_url"])
         (run / "classified.json").write_text(json.dumps([self.entry]))
         (run / "research_batch0.json").write_text(json.dumps([
             {"ticker": "TEST", "research": self.research}]))
@@ -205,9 +292,9 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(first.returncode, 1, first.stderr)
         report = json.loads((run / "verification_report.json").read_text())
         self.assertEqual(report["counts"]["unverifiable"], 1)
-        key = report["entries"][0]["verification"]["checks"][0]["review_id"]
+        keys = [c["review_id"] for c in report["entries"][0]["verification"]["checks"]]
         review = next(iter(self.review().values()))
-        (run / "evidence_reviews.json").write_text(json.dumps({key: review}))
+        (run / "evidence_reviews.json").write_text(json.dumps({k: review for k in keys}))
         second = subprocess.run(command, capture_output=True, text=True)
         self.assertEqual(second.returncode, 0, second.stderr)
         saved = json.loads((run / "classified.json").read_text())[0]

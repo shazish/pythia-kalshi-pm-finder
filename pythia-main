@@ -526,6 +526,10 @@ Output schema — each entry must be the original candidate dict with one new ke
     }}
   }}
 
+Source URLs: record the original publisher's article URL (never a news.google.com or
+other redirect/aggregator link, never an invented or placeholder URL such as example.com).
+Prefer the settlement source, official data and major wire services for the deciding fact.
+
 Batches:""")
 
         for i, count, path in batches:
@@ -791,7 +795,11 @@ Captures cited sources and automatically reviews article/claim/settlement eviden
 Uses the configured model and caches reviews; see docs/verification.md.
 Trusted domains never bypass claim and settlement support checks.
 If exit 1, inspect verification_report.json for missing evidence or model failures.
-Unverifiable or contradicted CERTAIN entries are withheld during finalization.
+Source tiers (source_policy.json): settlement/Tier 1 sources can confirm the deciding
+fact alone; any other non-blocked site is semi-reliable and needs a second independent
+source; blocked sites are ignored. Outcomes: verified = CERTAIN; downgraded = relabelled
+LIKELY; needs_review = a source could not be fetched (shown as NEEDS REVIEW near-miss);
+unverifiable or contradicted = withheld during finalization.
 Anomaly candidates (STRONG/WATCH/SKIP) keep their separate quantitative route.
 
 {sep}

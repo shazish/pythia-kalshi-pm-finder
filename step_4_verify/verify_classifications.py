@@ -57,7 +57,7 @@ def main():
         from step_4_verify.article_review import ArticleReviewer
         reviewer = ArticleReviewer(model=args.model)
     reports = []
-    counts = {"verified": 0, "contradicted": 0, "unverifiable": 0}
+    counts = {"verified": 0, "downgraded": 0, "needs_review": 0, "contradicted": 0, "unverifiable": 0}
     for entry in results:
         candidate, classification = split_entry(entry)
         if classification.get("classification") != "CERTAIN":
@@ -74,17 +74,24 @@ def main():
                     check["automatic_review_error"] = errors[check["review_id"]]
             atomic_json(classified_path, results)
         counts[report["status"]] += 1
+        if report["status"] == "downgraded":
+            # Real but thinly sourced: keep it visible as LIKELY. Done after the final
+            # verify_entry call because the classification is part of the review fingerprint.
+            classification["_original_classification"] = "CERTAIN"
+            classification["_verification_downgrade"] = report["reason"]
+            classification["classification"] = "LIKELY"
         reports.append({"ticker": candidate.get("ticker"), "candidate": candidate,
                         "classification": {k: v for k, v in classification.items()
                                            if not k.startswith("_")}, "verification": report})
-        print(f"{candidate.get('ticker')}: {report['status']}")
+        print(f"{candidate.get('ticker')}: {report['status']}"
+              + (f" ({report['reason']})" if report.get("reason") else ""))
     atomic_json(classified_path, results)
     atomic_json(directory / "verification_report.json", {"counts": counts, "entries": reports})
     from shared.pipeline_run_log import RunLog
     RunLog(directory / "pipeline_run.md").step_evidence_verify(counts)
     print(json.dumps(counts))
     # Unknown evidence is preserved as such, never fabricated into contradiction.
-    return 1 if counts["contradicted"] or counts["unverifiable"] else 0
+    return 1 if counts["contradicted"] or counts["unverifiable"] or counts["needs_review"] else 0
 
 
 if __name__ == "__main__":

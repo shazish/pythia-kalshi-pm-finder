@@ -103,6 +103,17 @@ _METRIC_PATTERNS = [
 
 # ── System prompt builders ────────────────────────────────────────────────────
 
+# Mirrors the step-4 source tiers (source_policy.json): a CERTAIN survives verification only
+# when its deciding fact comes from the settlement source, a Tier 1 source, or two
+# independent other publishers; blocked sources are ignored as evidence.
+SOURCE_RULE = (
+    "SOURCES: For the fact that decides settlement, cite the market's own settlement source or an "
+    "official/primary source (government data, the resolution authority, a major wire service or "
+    "newspaper) whenever one exists; otherwise cite two independent publishers. Never cite prediction "
+    "markets, betting odds, AI-generated pages, social media or aggregator/redirect links "
+    "(e.g. news.google.com) as confirming signals — link the original publisher's article."
+)
+
 def get_classifier_system_prompt(recency_days: int = None, platform: str = "Kalshi") -> str:
     """Return the regular classifier system prompt with the given recency window."""
     if recency_days is None:
@@ -119,6 +130,7 @@ CRITICAL RULES:
 6. Classify as CERTAIN only when the outcome is a near-mathematical certainty based on current real-world knowledge.
 7. If ANY real contradicting signal exists, you MUST downgrade from CERTAIN to LIKELY. If you have no real contradicting signals, leave contradicting_signals as an empty list — do NOT populate it with hypothetical scenarios to "be safe".
 8. Always consider settlement risk: could {platform}'s settlement mechanism rule differently than expected?
+9. {SOURCE_RULE}
 
 METRIC VERIFICATION (mandatory for economic/data-driven markets):
 - The candidate prompt includes a SETTLEMENT METRIC field extracted from the settlement rules.
@@ -218,6 +230,7 @@ CRITICAL RULES:
    CONTRADICTING signals must be real-world evidence — not theoretical possibilities or hypothetical edge cases. A contradicting signal must be something that actually challenges the outcome, not something that "could theoretically" happen. If you have no real contradicting signals, leave contradicting_signals as an empty list.
 6. If you cannot find ANY reason to justify the accumulation, treat "unexplained smart money" as a mild confirming signal, not a red flag.
 7. Factor in the DAYS TO CLOSE: near-term anomalies (< 14 days) with high volume are stronger signals than far-horizon ones. Smart money is more likely to be informed about imminent events.
+8. {SOURCE_RULE}
 
 METRIC VERIFICATION (mandatory for economic/data-driven markets):
 - The candidate prompt includes a SETTLEMENT METRIC field extracted from the settlement rules.

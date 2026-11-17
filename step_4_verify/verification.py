@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, urljoin
 
 REPO = Path(__file__).resolve().parent.parent
 POLICY_PATH = REPO / "source_policy.json"
-VERSION = 1
+VERSION = 2  # 2: source tiers, ignored/fetch_failed checks, needs_review/downgraded statuses
 
 
 def digest(value):
@@ -47,6 +47,9 @@ def load_policy(path=POLICY_PATH):
     for key in ("evidence_ttl_hours", "verification_ttl_hours"):
         if not isinstance(policy.get(key), (int, float)) or not 0 < policy[key] <= 168:
             raise ValueError(f"{key} must be between 0 and 168")
+    policy.setdefault("min_verified_signals", 3)
+    if type(policy["min_verified_signals"]) is not int or not 1 <= policy["min_verified_signals"] <= 10:
+        raise ValueError("min_verified_signals must be an integer between 1 and 10")
     return policy
 
 
@@ -74,6 +77,50 @@ def source_category(url, ticker, policy):
     if any(matches(host, d) for d in policy["trusted_domains"]):
         return "trusted"
     return "unknown"
+
+
+# Source weight for a verified claim. Any unlisted, non-blocked publisher is semi-reliable:
+# usable as support, but the settlement-deciding fact needs a stronger or second source.
+TIER_RANK = {"resolution": 3, "trusted": 2, "unknown": 1}
+TIER_NAME = {"resolution": "resolution", "trusted": "tier1", "unknown": "semi"}
+SECOND_LEVEL_LABELS = ("co", "com", "gov", "org", "ac", "net", "govt", "go", "or", "edu")
+DUPLICATE_EXCERPT_RATIO = 0.8
+
+
+def registrable_domain(host):
+    """Approximate publisher identity (no public-suffix list dependency)."""
+    parts = host.lower().rstrip(".").split(".")
+    if len(parts) >= 3 and parts[-2] in SECOND_LEVEL_LABELS and len(parts[-1]) == 2:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
+def independent(first, second):
+    """Two verified checks are independent if different publishers wrote different text."""
+    from difflib import SequenceMatcher
+    if registrable_domain(hostname(first["evidence"]["final_url"])) == \
+            registrable_domain(hostname(second["evidence"]["final_url"])):
+        return False
+    a, b = (normalize(c["review"].get("excerpt", "")).lower() for c in (first, second))
+    return SequenceMatcher(None, a, b).ratio() < DUPLICATE_EXCERPT_RATIO
+
+
+def sourcing_decision(checks, policy):
+    """Status and reason for an entry whose evidence content has fully passed review."""
+    counted = [c for c in checks if c["status"] == "verified"]
+    minimum = policy["min_verified_signals"]
+    if len(counted) < minimum:
+        return "downgraded", (f"Only {len(counted)} confirming signal(s) verified after excluding "
+                              f"blocked sources; CERTAIN needs {minimum}")
+    decisive = [c for c in counted if c.get("decisive")]
+    if any(c["tier"] in ("resolution", "tier1") for c in decisive):
+        return "verified", "Deciding fact confirmed by a settlement or Tier 1 source"
+    semi = [c for c in decisive if c["tier"] == "semi"]
+    if any(independent(a, b) for i, a in enumerate(semi) for b in semi[i + 1:]):
+        return "verified", "Deciding fact confirmed by two independent semi-reliable sources"
+    if semi:
+        return "downgraded", "Deciding fact rests on a single semi-reliable source"
+    return "downgraded", "No verified source establishes the deciding fact on its own"
 
 
 class PageText(HTMLParser):
@@ -226,7 +273,8 @@ def verify_entry(entry, research, policy, cache, reviews):
             continue
         check["source_category"] = category
         if category == "blocked":
-            check["reason"] = "Source excluded by policy"
+            # Not evidence (prediction market, AI page, aggregator...): ignored, not fatal.
+            check.update(status="ignored", reason="Source excluded by policy; not counted as evidence")
             continue
         if url not in urls:
             check["reason"] = "Citation absent from this ticker's research"
@@ -235,17 +283,15 @@ def verify_entry(entry, research, policy, cache, reviews):
         check["evidence"] = {k: v for k, v in page.items() if k != "text"}
         check["evidence"]["cache_file"] = str(cache.directory / (digest(url) + ".json"))
         if page["status"] != "captured":
-            check["reason"] = page["error"]
+            # The page could not be read (403, PDF, timeout): the claim is untested, not refuted.
+            check.update(status="fetch_failed", reason=f"Source could not be fetched: {page['error']}")
             continue
         final_category = source_category(page["final_url"], ticker, policy)
         if final_category == "blocked":
-            check["reason"] = "Redirected source excluded by policy"
+            check.update(status="ignored", reason="Redirected source excluded by policy; not counted as evidence")
             continue
-        # Unknown publishers require corroboration review in a later phase.
-        # Redirects cannot inherit the original publisher's trusted status.
-        if category == "unknown" or final_category == "unknown":
-            check["reason"] = "Unknown source requires corroboration; approve its domain or use an approved source"
-            continue
+        # Redirects cannot inherit the original publisher's status: use the weaker tier.
+        check["tier"] = TIER_NAME[min(category, final_category, key=TIER_RANK.get)]
         review_id = digest({"input": fingerprint, "url": url, "fact": signal["fact"],
                             "content": page["content_hash"], "policy": digest(policy)})
         check["review_id"] = review_id
@@ -268,16 +314,25 @@ def verify_entry(entry, research, policy, cache, reviews):
         elif (review.get("verdict") == "supported" and review.get("settlement_match") is True
               and review.get("time_relevant") is True and review.get("article_accessible") is True
               and review.get("reason") and candidate.get("rules_primary")):
-            check.update(status="verified", reason=review["reason"])
+            check.update(status="verified", reason=review["reason"], decisive=review.get("decisive") is True)
         else:
             check["reason"] = "Review does not establish support, readable article, timing and settlement match"
 
-    status = "unverifiable"
-    if any(c["status"] == "contradicted" for c in checks):
+    # Precedence: refuted > failed content check (withheld) > unreadable source (needs review)
+    # > sourcing strength (verified, or downgraded to LIKELY).
+    statuses = {c["status"] for c in checks}
+    reason = ""
+    if not checks:
+        status, reason = "unverifiable", "No confirming signals"
+    elif "contradicted" in statuses:
         status = "contradicted"
-    elif checks and all(c["status"] == "verified" for c in checks):
-        status = "verified"
-    report = {"version": VERSION, "status": status, "input_hash": fingerprint,
+    elif "unverifiable" in statuses:
+        status = "unverifiable"
+    elif "fetch_failed" in statuses:
+        status, reason = "needs_review", "One or more sources could not be fetched; check them manually"
+    else:
+        status, reason = sourcing_decision(checks, policy)
+    report = {"version": VERSION, "status": status, "reason": reason, "input_hash": fingerprint,
               "policy_hash": digest(policy), "checked_at": now(), "checks": checks}
     classification["_verification"] = report
     return report
@@ -295,6 +350,8 @@ def verification_passes(candidate, classification, policy=None):
                 and report.get("checks")):
             return False
         for check in report["checks"]:
+            if check.get("status") == "ignored":
+                continue
             if (check.get("status") != "verified"
                     or not fresh(check["evidence"]["retrieved_at"], policy["evidence_ttl_hours"])
                     or not fresh(check["review"]["reviewed_at"], policy["verification_ttl_hours"])):

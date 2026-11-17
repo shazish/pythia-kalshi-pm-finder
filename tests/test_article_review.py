@@ -21,7 +21,7 @@ class FakeClient:
             {"review_id": c["review_id"], "verdict": "supported",
              "excerpt": TEXT.split(".")[0] + ".", "article_accessible": True,
              "evidence_credible": True, "settlement_match": True, "time_relevant": True,
-             "reason": "The exact final metric and reporting period match the contract."}
+             "decisive": True, "reason": "The exact final metric and reporting period match the contract."}
             for c in payload["claims"]]}
         if self.change:
             self.change(result)
@@ -122,12 +122,37 @@ class AutomaticReviewTests(unittest.TestCase):
         self.assertEqual(report["status"], "contradicted")
         self.assertFalse(errors)
 
-    def test_unknown_source_never_calls_model(self):
+    def test_semi_reliable_source_is_reviewed_but_cannot_confirm_alone(self):
         self.f.policy["trusted_domains"] = []
         client = FakeClient()
         report, _, _, _ = self.execute(client)
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(report["checks"][0]["tier"], "semi")
+        self.assertEqual(report["status"], "downgraded")
+
+    def test_missing_decisive_flag_is_rejected(self):
+        report, reviews, errors, _ = self.execute(FakeClient(lambda r: r["reviews"][0].pop("decisive")))
+        self.assertFalse(reviews)
+        self.assertTrue(errors)
+
+    def test_blocked_source_never_calls_model(self):
+        self.f.policy["blocked_domains"] = ["nytimes.com"]
+        client = FakeClient()
+        report, _, _, _ = self.execute(client)
         self.assertFalse(client.calls)
-        self.assertEqual(report["status"], "unverifiable")
+        self.assertEqual(report["checks"][0]["status"], "ignored")
+
+    def test_old_automatic_review_without_decisive_is_redone(self):
+        client = FakeClient()
+        report, reviews, _, reviewer = self.execute(client)
+        for record in reviews.values():
+            record["automatic_version"] = 1
+            record.pop("decisive")
+        report = self.f.verify(reviews)
+        reviewer.review(self.f.entry["candidate"], self.f.entry["classification"],
+                        report, self.f.cache, reviews, self.f.policy)
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(self.f.verify(reviews)["status"], "verified")
 
     def test_claims_share_one_article_in_prompt(self):
         self.f.entry["classification"]["confirming_signals"].append(
@@ -146,6 +171,10 @@ class AutomaticReviewTests(unittest.TestCase):
         spec.loader.exec_module(cli)
         run = Path(self.f.tmp.name) / "run"
         run.mkdir()
+        # The CLI loads the real policy (3 verified signals); three claims share one article.
+        self.f.entry["classification"]["confirming_signals"] = [
+            {"fact": f"Final result is 42 units (point {i}).", "source_url": "https://www.nytimes.com/example"}
+            for i in range(3)]
         self.f.cache.get("https://www.nytimes.com/example")
         (run / "classified.json").write_text(json.dumps([self.f.entry]))
         (run / "research_batch0.json").write_text(json.dumps([

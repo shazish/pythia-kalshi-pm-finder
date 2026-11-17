@@ -4,7 +4,7 @@ import os
 
 from step_4_verify.verification import digest, fresh, normalize, now
 
-REVIEW_VERSION = 1
+REVIEW_VERSION = 2  # 2: adds the "decisive" flag
 MAX_INPUT_CHARS = 60000
 MAX_CLAIMS = 12
 
@@ -26,6 +26,10 @@ An approved domain alone does not prove an article or its claims true.
 and secondary resolution rules and resolution authority? Related metrics do not match.
 5. Is its timing relevant? Current state, forecasts and a lack of contrary news
 do not establish a future CERTAIN outcome. Check the classified side and horizon.
+6. Is it decisive? decisive=true only if the passage, on its own, establishes the
+fact that settles the contract for the classified side (e.g. the official figure,
+the certified result, the completed event). Supporting context, trends, forecasts
+and partial facts are decisive=false.
 
 Use unverifiable for missing context, inaccessible content, ambiguity, wrong metric,
 irrelevant dates or insufficient authority. Use contradicted only for explicit,
@@ -40,9 +44,10 @@ Return ONLY JSON: {"reviews": [
  "evidence_credible": true,
  "settlement_match": true,
  "time_relevant": true,
+ "decisive": false,
  "reason": "<brief evidence-specific explanation, including any limitations>"}
 ]}
-Return exactly one record for each supplied claim. All four flags must be literal
+Return exactly one record for each supplied claim. All five flags must be literal
 JSON booleans. A supported verdict requires all flags true. A contradicted verdict
 requires readable, credible and time-relevant evidence. Otherwise use unverifiable.
 """
@@ -67,7 +72,8 @@ class ArticleReviewer:
             previous = reviews.get(key, {})
             if isinstance(previous, dict) and fresh(previous.get("reviewed_at"), policy["verification_ttl_hours"]):
                 # Human reviews that already passed verification are reusable.
-                if check.get("status") in ("verified", "contradicted"):
+                if (check.get("status") in ("verified", "contradicted")
+                        and previous.get("automatic_version") in (None, REVIEW_VERSION)):
                     continue
                 if (previous.get("automatic_version") == REVIEW_VERSION
                         and previous.get("verdict") == "unverifiable"):
@@ -123,7 +129,7 @@ class ArticleReviewer:
                 if verdict not in ("supported", "contradicted", "unverifiable"):
                     raise ValueError("Invalid verdict")
                 flags = ("article_accessible", "evidence_credible", "settlement_match", "time_relevant")
-                if any(type(item.get(f)) is not bool for f in flags):
+                if any(type(item.get(f)) is not bool for f in (*flags, "decisive")):
                     raise ValueError("Review flags must be booleans")
                 if not isinstance(item.get("reason"), str) or not item["reason"].strip():
                     raise ValueError("Missing evidence-specific reason")
@@ -138,7 +144,7 @@ class ArticleReviewer:
                 if verdict == "contradicted" and not all(item[f] for f in (
                         "article_accessible", "evidence_credible", "time_relevant")):
                     raise ValueError("Contradiction lacks credible relevant evidence")
-                validated[key] = {k: item[k] for k in ("verdict", "excerpt", "reason", *flags)}
+                validated[key] = {k: item[k] for k in ("verdict", "excerpt", "reason", "decisive", *flags)}
                 validated[key].update(reviewer="model:" + self.client.model, reviewed_at=now(),
                                       automatic_version=REVIEW_VERSION)
                 if hasattr(self.client, "model_provenance"):

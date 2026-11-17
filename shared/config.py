@@ -14,7 +14,7 @@ SCANNER_DEFAULTS = {
     "deep_spread_min_volume": 200,  # higher volume floor for wide-spread (spread > spread_max) markets in deep scan
     "max_ask_price": 95,             # cents — upper ceiling; ask ≥96 can't clear 3% edge after fees
     "price_change_threshold": 3,    # cents — meaningful change vs cache
-    "max_pages": 20,                # max event pages per full scan (2,000 events)
+    "max_pages": 250,               # max event pages per full scan (25,000 events); Kalshi /events is ~far-dated-first, so near-term events sit on late pages
     "incremental_max_pages": 5,     # max market pages per incremental scan (500 markets)
     "cache_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/market_cache.json"),
     "candidates_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/candidates.json"),
@@ -45,7 +45,7 @@ ANOMALY_DEFAULTS = {
     "min_implied_hc_dollars": 10000,      # $10k+ on high-confidence side to qualify
     "min_volume": 500,                    # raw volume floor
     "max_spread": 10,                     # wider spread allowed than primary scanner
-    "max_pages": 20,
+    "max_pages": 250,                     # must cover all /events pages (~200 as of 2026-11); near-term events are on late pages
     "min_hc_ratio": 1.0,               # minimum HC-to-opposite implied dollar ratio; overridden to 1.5 in pythia-main
     "scan_categories": ["Politics", "Economics", "Entertainment", "Weather", "World", "Elections", "Health", "Finance"],
     "cache_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/anomaly_cache.json"),

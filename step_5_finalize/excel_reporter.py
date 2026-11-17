@@ -439,8 +439,10 @@ def _extract_near_misses(to_log):
         if not is_actionable:
             continue
         routing = r.get("routing", "")
-        if routing in ("skipped_validation_failed", "logged_below_threshold", "skipped_already_notified"):
+        if routing in ("skipped_validation_failed", "logged_below_threshold", "skipped_already_notified",
+                       "skipped_evidence_needs_review"):
             status_labels = {
+                "skipped_evidence_needs_review": "NEEDS REVIEW — source could not be fetched",
                 "skipped_validation_failed": "NEAR MISS — validation failed",
                 "logged_below_threshold":    "NEAR MISS — edge below threshold",
                 "skipped_already_notified":  "NEAR MISS — already notified",

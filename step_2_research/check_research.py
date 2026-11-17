@@ -35,6 +35,23 @@ def _run_cache() -> Path:
             return run_path
     return REPO / "cache"
 
+def bad_source_url(url) -> str:
+    """Return why a finding URL can never serve as evidence, or '' if it looks usable."""
+    from urllib.parse import urlsplit
+    try:
+        host = (urlsplit(url or "").hostname or "").lower().rstrip(".")
+    except ValueError:
+        return "malformed URL"
+    if not host:
+        return "missing URL"
+    labels = host.split(".")
+    if any(label == "example" or label.startswith("example") and len(labels) <= 3 for label in labels[:-1]):
+        return "placeholder (invented) URL"
+    if host == "news.google.com" or host.endswith(".news.google.com"):
+        return "Google News redirect, not the publisher URL"
+    return ""
+
+
 RETRY_PATH = _run_cache() / "research_retry.json"
 RETRY_CHUNKS_PATH = _run_cache() / "research_retry_chunks.json"
 
@@ -92,7 +109,12 @@ def check_batch(batch_path: Path) -> dict:
         ]
         RETRY_CHUNKS_PATH.write_text(json.dumps(chunks, indent=2))
 
-    return {"ok": ok, "empty": empty, "failed": failed, "n_retries": len(new_retries)}
+    bad_urls = [(e.get("ticker"), f.get("url"), why)
+                for e in data for f in e.get("research", {}).get("findings", []) or []
+                if isinstance(f, dict) and (why := bad_source_url(f.get("url")))]
+
+    return {"ok": ok, "empty": empty, "failed": failed, "n_retries": len(new_retries),
+            "bad_urls": bad_urls}
 
 
 def main():
@@ -111,6 +133,11 @@ def main():
         f"ok={r['ok']} empty={r['empty']} search_failed={r['failed']} "
         f"(+{r['n_retries']} added to retry queue)"
     )
+    if r["bad_urls"]:
+        print(f"[check_research] WARNING: {len(r['bad_urls'])} finding URL(s) can never verify "
+              f"— replace with the publisher's real article URL:")
+        for ticker, url, why in r["bad_urls"][:20]:
+            print(f"  {ticker}: {why}: {url}")
     if r['n_retries'] > 0 and RETRY_PATH.exists():
         queue = json.loads(RETRY_PATH.read_text())
         if queue:

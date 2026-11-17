@@ -206,7 +206,9 @@ class OpportunityManager:
 
             # Schema validation cannot stand in for evidence verification.
             if is_certain and not verification_passes(candidate, classification):
-                to_log.append({**cm, "routing": "skipped_evidence_unverified",
+                needs_review = (classification.get("_verification") or {}).get("status") == "needs_review"
+                to_log.append({**cm, "routing": ("skipped_evidence_needs_review" if needs_review
+                                                 else "skipped_evidence_unverified"),
                                "logged_at": datetime.now(timezone.utc).isoformat()})
                 skipped_validation += 1
                 continue

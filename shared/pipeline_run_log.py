@@ -171,14 +171,17 @@ class RunLog:
 """)
 
     def step_evidence_verify(self, counts: dict) -> None:
-        status = "Verified" if not (counts["contradicted"] or counts["unverifiable"]) else "Evidence review required"
+        problems = counts["contradicted"] or counts["unverifiable"] or counts.get("needs_review", 0)
+        status = "Verified" if not problems else "Evidence review required"
         self._append(
             f"## Step 4 — Evidence verification\n"
             f"**Status:** {status} | **Timestamp:** {_now()}\n"
-            f"**Verified:** {counts['verified']} | **Contradicted:** {counts['contradicted']} | "
-            f"**Unverifiable:** {counts['unverifiable']}\n"
-            "Details: verification_report.json. Classification labels are preserved; "
-            "unverified CERTAIN entries are withheld at finalization.\n\n---\n\n"
+            f"**Verified:** {counts['verified']} | **Downgraded to LIKELY:** {counts.get('downgraded', 0)} | "
+            f"**Needs review (fetch failed):** {counts.get('needs_review', 0)} | "
+            f"**Contradicted:** {counts['contradicted']} | **Unverifiable:** {counts['unverifiable']}\n"
+            "Details: verification_report.json. Thinly sourced CERTAIN entries become LIKELY; "
+            "fetch-failed CERTAIN entries are shown as needs-review near-misses; contradicted or "
+            "unverifiable CERTAIN entries are withheld at finalization.\n\n---\n\n"
         )
 
     # ── Step 5: Finalize ──────────────────────────────────────────────────────
