@@ -48,6 +48,20 @@ ANOMALY_DEFAULTS = {
     "max_pages": 250,                     # must cover all /events pages (~200 as of 2026-11); near-term events are on late pages
     "min_hc_ratio": 1.0,               # minimum HC-to-opposite implied dollar ratio; overridden to 1.5 in pythia-main
     "scan_categories": ["Politics", "Economics", "Entertainment", "Weather", "World", "Elections", "Health", "Finance"],
+    # Activity gate: admits markets with a fresh burst of trading, on either side, at any
+    # price in [flow_min_price, flow_max_price] — catches longshot buying the favourite gate misses.
+    "flow_min_price": 3,                  # YES price bounds (cents) for the activity gate
+    "flow_max_price": 97,
+    "min_24h_contracts": 2000,            # contracts traded in last 24h (= $ notional at $1 payout)
+    "min_volume_spike": 3.0,              # last-24h volume / average daily volume before that
+    # Taker-flow capture (one /markets/trades call series per qualifying market)
+    "trade_window_hours": 24,
+    "trade_pages_max": 5,                 # x1000 trades per market
+    "max_flow_candidates": 600,           # cap on markets whose trades are fetched per scan
+    "min_flow_contracts": 500,            # taker-flow sample below this is not scored
+    "large_trade_dollars": 500,           # a single taker trade >= this is a "large trade"
+    "cotimed_window_minutes": 15,         # large trades in sibling markets this close = coordinated
+    "prior_max_age_hours": 168,           # snapshot-cache deltas older than this are ignored
     "cache_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/anomaly_cache.json"),
     "candidates_file": os.path.expanduser("~/.hermes/kalshi-tracker/cache/anomaly_candidates.json"),
 }

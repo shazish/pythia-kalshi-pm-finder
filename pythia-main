@@ -673,8 +673,13 @@ Run:
 
 This routes each anomaly candidate through Classifier._classify_anomaly():
   1. Score via anomaly_scorer.score_anomaly() → STRONG / WATCH / SKIP
+     Kalshi candidates use the flow model: last-24h taker flow direction, volume spike vs
+     normal, price response, cross-strike coordination. The candidate side is the side the
+     flow backs (may be the cheaper longshot). Signal side >85c or already repriced is capped.
   2. SKIP candidates: returned immediately, no API call
-  3. WATCH/STRONG: veto LLM searches for public explanations; discounts score if found
+  3. WATCH/STRONG: veto LLM looks for reasons the flow is noise (event concluded, hedge,
+     market-making/arbitrage). A confident veto caps the tier at WATCH. If the veto cannot
+     run after one retry, the entry is marked "veto unavailable" and is not actioned.
 Results saved to {LOGS_DIR}/{run_dir}/classified.json
 
 The veto LLM requires OPENROUTER_API_KEY or ANTHROPIC_API_KEY (reads from env or .env).

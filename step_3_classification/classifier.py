@@ -287,25 +287,27 @@ ANOMALY_CLASSIFIER_SYSTEM_PROMPT = get_anomaly_classifier_system_prompt()
 
 ANOMALY_VETO_SYSTEM_PROMPT = """You are an anomaly veto checker for a prediction market signal system.
 
-A market has been flagged because it has unusually large capital deployed on its high-confidence side despite its price being well below the certainty threshold. The quantitative scoring system thinks this is a genuine smart-money signal. Your ONLY job is to find obvious PUBLIC explanations that would make this volume UNSURPRISING.
+A market has been flagged because traders are aggressively buying one side (the SIGNAL SIDE). The signal side may be the price favourite or the cheaper longshot. The quantitative scoring system thinks the buying may be informed. Your ONLY job is to find a clear PUBLIC reason the buying is NOT a directional bet on the signal side, i.e. noise.
 
-Search for:
-1. A well-known upcoming scheduled event that would make this a natural hedge (earnings, central bank meeting, election, vote, scheduled report release)
-2. Evidence this side is a popular portfolio hedge for a correlated position
-3. Evidence the volume is market-maker activity (both sides balanced, institutional book management)
-4. Any very recent public announcement that would explain why retail or institutional traders would pile on this side
+Veto (vetoed=true) only for explanations that make the flow non-informative:
+1. The event has already concluded or been decided AGAINST the signal side (the market is stale)
+2. Hedging: the buying offsets a correlated position or brackets a scheduled event (central bank meeting, report release, vote), not a view on this outcome
+3. Market-making or arbitrage: balanced two-sided activity, or mechanical rebalancing across sibling strikes of the same event
+4. A settlement technicality makes the signal side unable to win
 
-IMPORTANT: If you cannot find a clear, specific, verifiable explanation — output vetoed=false. Unexplained smart money is a POSITIVE signal, not a reason to veto.
+Do NOT veto because public news SUPPORTS the signal side. Supportive news means the price may be lagging reality, which strengthens the signal; report it in supporting_info instead.
 
 Do NOT veto based on:
 - General uncertainty or "anything could happen"
 - The price being low (that is the point — we expect it to be underpriced)
 - Theoretical possibilities with no real-world evidence
 
-Output ONLY valid JSON matching this exact schema:
-{"vetoed": false, "veto_reason": "", "veto_confidence": 0}
+If you cannot find a clear, specific explanation of the kinds above — output vetoed=false.
+
+Output ONLY valid JSON matching this exact schema (keep every string under 300 characters):
+{"vetoed": false, "veto_reason": "", "veto_confidence": 0, "supporting_info": ""}
 or
-{"vetoed": true, "veto_reason": "specific public explanation found", "veto_confidence": 70}
+{"vetoed": true, "veto_reason": "specific public explanation found", "veto_confidence": 70, "supporting_info": ""}
 
 veto_confidence must be 0 when vetoed=false, and 70-100 when vetoed=true."""
 
@@ -317,26 +319,39 @@ def build_anomaly_veto_prompt(candidate: dict, recency_days: int = None) -> str:
     evidence = candidate.get("anomaly_evidence", {})
     side     = candidate.get("high_confidence_side", "YES")
     prob     = candidate.get("implied_probability", 0)
-    hc_d     = evidence.get("implied_hc_dollars", 0)
-    ratio    = evidence.get("hc_to_opp_ratio", 0)
     days     = candidate.get("days_to_close", "?")
+    flow     = evidence.get("flow") or {}
+
+    if flow.get("total_contracts"):
+        signal = (f"{evidence.get('anomaly_type', '')}: last 24h takers bought "
+                  f"YES {flow.get('taker_yes_contracts', 0):,.0f} vs NO {flow.get('taker_no_contracts', 0):,.0f} "
+                  f"contracts ({(flow.get('flow_share') or 0):.0%} on {flow.get('flow_side')}); "
+                  f"24h volume {evidence.get('volume_24h', 0):,.0f} = {evidence.get('volume_spike') or 'n/a'}x normal; "
+                  f"{side} price change 24h: {evidence.get('signal_price_change_24h')}c; "
+                  f"top-5 trades = {(flow.get('top5_share') or 0):.0%} of flow")
+        if evidence.get("cotimed_markets"):
+            signal += f"; large trades hit sibling markets within minutes: {', '.join(evidence['cotimed_markets'][:5])}"
+    else:
+        signal = (f"${evidence.get('implied_hc_dollars', 0):,} implied on {side} side | "
+                  f"HC/opp ratio: {evidence.get('hc_to_opp_ratio', 0)}x")
 
     return f"""Anomaly veto check for this market:
 
-TITLE: {candidate.get('title', 'N/A')}
+TITLE: {candidate.get('title', 'N/A')} {candidate.get('subtitle', '') or ''}
 TICKER: {candidate.get('ticker', 'N/A')}
-HIGH-CONFIDENCE SIDE: {side} @ {prob}c
-SIGNAL: ${hc_d:,} implied on {side} side | HC/opp ratio: {ratio}x
+SIGNAL SIDE: {side} @ {prob}c
+SIGNAL: {signal}
 DAYS TO CLOSE: {days}
-VOLUME: {candidate.get('volume', 'N/A')}
+SETTLEMENT RULES: {(candidate.get('rules_primary') or '')[:400]}
+VOLUME (lifetime): {candidate.get('volume', 'N/A')}
 OPEN INTEREST: {candidate.get('open_interest', 'N/A')}
 
-Search for any public explanation that would make this volume UNSURPRISING.
+Search for any public explanation that makes this buying NON-directional noise (see the veto list).
 Perform at least 2 searches before deciding.
-Search 1: "{candidate.get('title', '')} news [current month year]" — recent developments
-Search 2: Is there a scheduled event, hedge, or known catalyst for the {side} side?
+Search 1: "{candidate.get('title', '')} news [current month year]" — recent developments, and whether the outcome is already known
+Search 2: Is there a hedge, scheduled event, or cross-strike arbitrage that explains buying {side}?
 
-Output ONLY the JSON schema specified. vetoed=false if no clear public explanation found."""
+Output ONLY the JSON schema specified. vetoed=false if no clear explanation found."""
 
 
 # ── Prompt builders ───────────────────────────────────────────────────────────
@@ -786,42 +801,56 @@ class Classifier:
         Flow:
           1. score_anomaly() → signal_score, tier (STRONG/WATCH/SKIP)
           2. SKIP → return immediately, no LLM call
-          3. WATCH/STRONG → run veto LLM; if vetoed with confidence >= 70,
-             subtract 20 from score and re-tier
+          3. WATCH/STRONG → run veto LLM (one retry); if vetoed with confidence >= 70,
+             subtract 20 and cap at WATCH; if it cannot run, mark veto_unavailable
+             and do not treat the entry as valid
           4. Return classification dict compatible with downstream consumers
         """
-        from step_3_classification.anomaly_scorer import score_anomaly, TIER_SKIP, STRONG_THRESHOLD, WATCH_THRESHOLD
+        from step_3_classification.anomaly_scorer import (score_anomaly, TIER_SKIP,
+                                                          STRONG_THRESHOLD, WATCH_THRESHOLD)
 
         scored = score_anomaly(candidate)
         signal_score = scored["signal_score"]
         tier         = scored["tier"]
         breakdown    = scored["score_breakdown"]
+        strong_at    = scored.get("strong_threshold", STRONG_THRESHOLD)
+        watch_at     = scored.get("watch_threshold", WATCH_THRESHOLD)
 
-        vetoed          = False
-        veto_reason     = ""
-        veto_confidence = 0
+        vetoed           = False
+        veto_reason      = ""
+        veto_confidence  = 0
+        veto_unavailable = False
+        supporting_info  = ""
 
         if tier != TIER_SKIP:
-            try:
-                veto_raw    = self._call_api(ANOMALY_VETO_SYSTEM_PROMPT, build_anomaly_veto_prompt(candidate))
-                veto_result = self._parse_json(veto_raw)
-                vetoed          = bool(veto_result.get("vetoed", False))
-                veto_reason     = veto_result.get("veto_reason", "")
-                veto_confidence = int(veto_result.get("veto_confidence", 0))
-            except Exception as e:
-                veto_reason = f"veto check failed: {e}"
+            # One retry: a truncated or malformed reply must not silently pass as "not vetoed".
+            last_error = None
+            for _ in range(2):
+                try:
+                    veto_raw    = self._call_api(ANOMALY_VETO_SYSTEM_PROMPT, build_anomaly_veto_prompt(candidate))
+                    veto_result = self._parse_json(veto_raw)
+                    vetoed          = bool(veto_result.get("vetoed", False))
+                    veto_reason     = str(veto_result.get("veto_reason", "") or "")
+                    veto_confidence = int(veto_result.get("veto_confidence", 0) or 0)
+                    supporting_info = str(veto_result.get("supporting_info", "") or "")
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+            if last_error is not None:
+                veto_unavailable = True
+                veto_reason = f"veto check failed: {last_error}"[:300]
 
             if vetoed and veto_confidence >= 70:
+                # A confident public explanation means the flow is noise: never actionable,
+                # but a still-high score stays visible as WATCH.
                 signal_score = max(signal_score - 20, 0)
-                if signal_score >= STRONG_THRESHOLD:
-                    tier = "STRONG"
-                elif signal_score >= WATCH_THRESHOLD:
-                    tier = "WATCH"
-                else:
-                    tier = TIER_SKIP
+                tier = "WATCH" if signal_score >= watch_at else TIER_SKIP
 
-        is_valid = tier == "STRONG"
-        errors   = [] if is_valid else [f"Tier {tier} — below STRONG threshold"]
+        is_valid = tier == "STRONG" and not veto_unavailable
+        errors   = [] if tier == "STRONG" else [f"Tier {tier} — below STRONG threshold"]
+        if veto_unavailable:
+            errors.append("Veto unavailable — noise check could not run; review manually")
         if vetoed and veto_confidence >= 70:
             errors.append(f"Vetoed: {veto_reason} (confidence {veto_confidence}%)")
 
@@ -835,13 +864,18 @@ class Classifier:
             "vetoed":               vetoed,
             "veto_reason":          veto_reason,
             "veto_confidence":      veto_confidence,
+            "veto_unavailable":     veto_unavailable,
+            "supporting_info":      supporting_info,
+            "anomaly_type":         (candidate.get("anomaly_evidence") or {}).get("anomaly_type", ""),
+            "score_model":          scored.get("model", ""),
+            "score_flags":          scored.get("flags", []),
             # Fields expected by downstream — empty for anomaly path
             "reasons":              [],
             "confirming_signals":   [],
             "contradicting_signals": [{"fact": f"Vetoed: {veto_reason}", "source_url": ""}] if vetoed and veto_confidence >= 70 else [],
             "what_would_change_this": "",
             "settlement_risk":      "",
-            "recent_developments":  "",
+            "recent_developments":  supporting_info,
             "searched_for":         [],
             "_valid":               is_valid,
             "_validation_errors":   errors,
