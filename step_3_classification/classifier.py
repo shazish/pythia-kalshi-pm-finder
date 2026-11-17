@@ -354,6 +354,103 @@ Search 2: Is there a hedge, scheduled event, or cross-strike arbitrage that expl
 Output ONLY the JSON schema specified. vetoed=false if no clear explanation found."""
 
 
+# ── Anomaly veto outcome (shared by the API route and the in-context subagent route) ──
+
+VETO_PENDING_ERROR = "Veto pending — run the in-context veto (step_3_classification/anomaly_veto.py)"
+
+
+def anomaly_base_result(candidate: dict) -> dict:
+    """Deterministic score → classification dict, before any veto."""
+    from step_3_classification.anomaly_scorer import score_anomaly, WATCH_THRESHOLD
+    scored = score_anomaly(candidate)
+    tier = scored["tier"]
+    return {
+        "classification":       tier,
+        "tier":                 tier,
+        "signal_score":         scored["signal_score"],
+        "score_breakdown":      scored["score_breakdown"],
+        "high_confidence_side": candidate.get("high_confidence_side", "YES"),
+        "confidence_score":     scored["signal_score"],
+        "vetoed":               False,
+        "veto_reason":          "",
+        "veto_confidence":      0,
+        "veto_unavailable":     False,
+        "veto_pending":         False,
+        "supporting_info":      "",
+        "anomaly_type":         (candidate.get("anomaly_evidence") or {}).get("anomaly_type", ""),
+        "score_model":          scored.get("model", ""),
+        "score_flags":          scored.get("flags", []),
+        "_watch_threshold":     scored.get("watch_threshold", WATCH_THRESHOLD),
+        # Fields expected by downstream — empty for anomaly path
+        "reasons":              [],
+        "confirming_signals":   [],
+        "contradicting_signals": [],
+        "what_would_change_this": "",
+        "settlement_risk":      "",
+        "recent_developments":  "",
+        "searched_for":         [],
+        "_valid":               tier == "STRONG",
+        "_validation_errors":   [] if tier == "STRONG" else [f"Tier {tier} — below STRONG threshold"],
+    }
+
+
+def mark_veto_pending(result: dict) -> dict:
+    """STRONG awaiting the in-context veto: never actionable until the veto is applied."""
+    result.update(veto_pending=True, _valid=False)
+    result["_validation_errors"] = [VETO_PENDING_ERROR]
+    return result
+
+
+def validate_veto_reply(reply) -> dict:
+    """Raise ValueError unless reply matches the veto schema exactly."""
+    if not isinstance(reply, dict):
+        raise ValueError("veto reply is not a JSON object")
+    if type(reply.get("vetoed")) is not bool:
+        raise ValueError("vetoed must be a boolean")
+    conf = reply.get("veto_confidence")
+    if type(conf) is not int:
+        raise ValueError("veto_confidence must be an integer")
+    if (reply["vetoed"] and not 70 <= conf <= 100) or (not reply["vetoed"] and conf != 0):
+        raise ValueError("veto_confidence must be 0 when not vetoed and 70-100 when vetoed")
+    for key in ("veto_reason", "supporting_info"):
+        if not isinstance(reply.get(key, ""), str):
+            raise ValueError(f"{key} must be a string")
+    if reply["vetoed"] and not reply.get("veto_reason", "").strip():
+        raise ValueError("a veto needs a specific veto_reason")
+    return reply
+
+
+def apply_anomaly_veto(result: dict, reply, error: str = None, provenance: dict = None) -> dict:
+    """
+    Apply a veto outcome to a STRONG result.
+      reply valid, vetoed  → score -20, capped at WATCH (never actionable)
+      reply valid, clear   → stays STRONG and valid
+      no valid reply       → veto_unavailable: stays STRONG but not valid (manual review)
+    """
+    result["veto_pending"] = False
+    if reply is None or error:
+        result.update(veto_unavailable=True, veto_reason=(error or "veto reply missing")[:300], _valid=False)
+        result["_validation_errors"] = ["Veto unavailable — noise check could not run; review manually"]
+    else:
+        result.update(vetoed=reply["vetoed"], veto_confidence=reply["veto_confidence"],
+                      veto_reason=reply.get("veto_reason", "")[:300],
+                      supporting_info=reply.get("supporting_info", "")[:300], veto_unavailable=False)
+        result["recent_developments"] = result["supporting_info"]
+        if reply["vetoed"]:
+            score = max(result["signal_score"] - 20, 0)
+            tier = "WATCH" if score >= result.get("_watch_threshold", 40) else "SKIP"
+            result.update(signal_score=score, confidence_score=score, classification=tier, tier=tier, _valid=False)
+            result["contradicting_signals"] = [{"fact": f"Vetoed: {result['veto_reason']}", "source_url": ""}]
+            result["_validation_errors"] = [f"Tier {tier} — below STRONG threshold",
+                                            f"Vetoed: {result['veto_reason']} (confidence {reply['veto_confidence']}%)"]
+        else:
+            result.update(_valid=True)
+            result["_validation_errors"] = []
+    if provenance:
+        result["_veto_provenance"] = provenance
+    return result
+
+
 # ── Prompt builders ───────────────────────────────────────────────────────────
 
 def extract_settlement_metric(rules: str) -> str:
@@ -710,6 +807,9 @@ class Classifier:
     _FALLBACK_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
     _MODEL_ENV_VARS = ("CLASSIFIER_MODEL", "HERMES_MODEL", "MODEL")
     MAX_TOKENS = 2048
+    # Anomaly veto route: "defer" = in-context subagents on the pipeline's own model (default);
+    # "api" = this classifier's model, used only when --model is passed.
+    anomaly_veto = "defer"
     MAX_RETRIES = 2
 
     def __init__(self, api_key: str = None, model: str = None):
@@ -796,90 +896,35 @@ class Classifier:
 
     def _classify_anomaly(self, candidate: dict) -> dict:
         """
-        Score an anomaly candidate quantitatively, then run LLM as veto filter.
+        Score an anomaly candidate quantitatively; STRONG candidates then get a veto check.
 
         Flow:
           1. score_anomaly() → signal_score, tier (STRONG/WATCH/SKIP)
-          2. SKIP → return immediately, no LLM call
-          3. WATCH/STRONG → run veto LLM (one retry); if vetoed with confidence >= 70,
-             subtract 20 and cap at WATCH; if it cannot run, mark veto_unavailable
-             and do not treat the entry as valid
-          4. Return classification dict compatible with downstream consumers
+          2. WATCH/SKIP → no veto (a veto can only lower a tier; neither is actionable)
+          3. STRONG → veto:
+               anomaly_veto == "defer" (default, no --model): marked veto_pending, not valid;
+                   in-context subagents run the veto (step_3_classification/anomaly_veto.py)
+               anomaly_veto == "api" (--model given): veto via this classifier's model,
+                   one retry on a malformed reply
+             apply_anomaly_veto() applies the outcome identically for both routes.
         """
-        from step_3_classification.anomaly_scorer import (score_anomaly, TIER_SKIP,
-                                                          STRONG_THRESHOLD, WATCH_THRESHOLD)
-
-        scored = score_anomaly(candidate)
-        signal_score = scored["signal_score"]
-        tier         = scored["tier"]
-        breakdown    = scored["score_breakdown"]
-        strong_at    = scored.get("strong_threshold", STRONG_THRESHOLD)
-        watch_at     = scored.get("watch_threshold", WATCH_THRESHOLD)
-
-        vetoed           = False
-        veto_reason      = ""
-        veto_confidence  = 0
-        veto_unavailable = False
-        supporting_info  = ""
-
-        if tier != TIER_SKIP:
-            # One retry: a truncated or malformed reply must not silently pass as "not vetoed".
-            last_error = None
-            for _ in range(2):
-                try:
-                    veto_raw    = self._call_api(ANOMALY_VETO_SYSTEM_PROMPT, build_anomaly_veto_prompt(candidate))
-                    veto_result = self._parse_json(veto_raw)
-                    vetoed          = bool(veto_result.get("vetoed", False))
-                    veto_reason     = str(veto_result.get("veto_reason", "") or "")
-                    veto_confidence = int(veto_result.get("veto_confidence", 0) or 0)
-                    supporting_info = str(veto_result.get("supporting_info", "") or "")
-                    last_error = None
-                    break
-                except Exception as e:
-                    last_error = e
-            if last_error is not None:
-                veto_unavailable = True
-                veto_reason = f"veto check failed: {last_error}"[:300]
-
-            if vetoed and veto_confidence >= 70:
-                # A confident public explanation means the flow is noise: never actionable,
-                # but a still-high score stays visible as WATCH.
-                signal_score = max(signal_score - 20, 0)
-                tier = "WATCH" if signal_score >= watch_at else TIER_SKIP
-
-        is_valid = tier == "STRONG" and not veto_unavailable
-        errors   = [] if tier == "STRONG" else [f"Tier {tier} — below STRONG threshold"]
-        if veto_unavailable:
-            errors.append("Veto unavailable — noise check could not run; review manually")
-        if vetoed and veto_confidence >= 70:
-            errors.append(f"Vetoed: {veto_reason} (confidence {veto_confidence}%)")
-
-        return {
-            "classification":       tier,
-            "tier":                 tier,
-            "signal_score":         signal_score,
-            "score_breakdown":      breakdown,
-            "high_confidence_side": candidate.get("high_confidence_side", "YES"),
-            "confidence_score":     signal_score,
-            "vetoed":               vetoed,
-            "veto_reason":          veto_reason,
-            "veto_confidence":      veto_confidence,
-            "veto_unavailable":     veto_unavailable,
-            "supporting_info":      supporting_info,
-            "anomaly_type":         (candidate.get("anomaly_evidence") or {}).get("anomaly_type", ""),
-            "score_model":          scored.get("model", ""),
-            "score_flags":          scored.get("flags", []),
-            # Fields expected by downstream — empty for anomaly path
-            "reasons":              [],
-            "confirming_signals":   [],
-            "contradicting_signals": [{"fact": f"Vetoed: {veto_reason}", "source_url": ""}] if vetoed and veto_confidence >= 70 else [],
-            "what_would_change_this": "",
-            "settlement_risk":      "",
-            "recent_developments":  supporting_info,
-            "searched_for":         [],
-            "_valid":               is_valid,
-            "_validation_errors":   errors,
-        }
+        result = anomaly_base_result(candidate)
+        if result["tier"] != "STRONG":
+            return result
+        if self.anomaly_veto != "api":
+            return mark_veto_pending(result)
+        reply, last_error = None, None
+        for _ in range(2):
+            try:
+                reply = self._parse_json(self._call_api(ANOMALY_VETO_SYSTEM_PROMPT,
+                                                        build_anomaly_veto_prompt(candidate)))
+                validate_veto_reply(reply)
+                last_error = None
+                break
+            except Exception as e:
+                reply, last_error = None, e
+        return apply_anomaly_veto(result, reply, error=None if last_error is None else
+                                  f"veto check failed: {last_error}")
 
     @classmethod
     def _resolve_model(cls) -> str:

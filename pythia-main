@@ -338,6 +338,10 @@ def finalize():
     for cm in classified:
         if "classification" in cm and isinstance(cm["classification"], dict):
             candidate_obj = cm.get("candidate", {})
+            # Anomaly validity comes from deterministic scoring + the veto, not from the
+            # research-classifier text checks (reasons/searched_for), which they never carry.
+            if "anomaly" in (candidate_obj.get("candidate_type") or ""):
+                continue
             cm["classification"] = validate_classification(
                 cm["classification"],
                 rules=candidate_obj.get("rules_primary", ""),
@@ -665,8 +669,8 @@ If identity is unavailable, record null.
         model_flag = f" --model {model_override}" if model_override else ""
         print(f"""
 Anomaly candidates are scored quantitatively — no per-ticker LLM research needed.
-The scorer (step_3_classification/anomaly_scorer.py) computes a signal score from market data, then a
-veto LLM runs a lightweight check for public explanations that would discount the signal.
+The scorer (step_3_classification/anomaly_scorer.py) computes a signal score from market data;
+STRONG candidates then get a veto check for reasons the flow is noise.
 
 Run:
   python3 step_3_classification/classify_all.py --run-dir {run_dir}{model_flag}
@@ -676,15 +680,25 @@ This routes each anomaly candidate through Classifier._classify_anomaly():
      Kalshi candidates use the flow model: last-24h taker flow direction, volume spike vs
      normal, price response, cross-strike coordination. The candidate side is the side the
      flow backs (may be the cheaper longshot). Signal side >85c or already repriced is capped.
-  2. SKIP candidates: returned immediately, no API call
-  3. WATCH/STRONG: veto LLM looks for reasons the flow is noise (event concluded, hedge,
-     market-making/arbitrage). A confident veto caps the tier at WATCH. If the veto cannot
-     run after one retry, the entry is marked "veto unavailable" and is not actioned.
+  2. WATCH/SKIP: no veto (a veto can only lower a tier; neither is actionable)
+  3. STRONG: veto looks for reasons the flow is noise (event concluded, hedge,
+     market-making/arbitrage). A confident veto caps the tier at WATCH. A missing or
+     invalid veto marks the entry "veto unavailable" and it is not actioned.
 Results saved to {LOGS_DIR}/{run_dir}/classified.json
-
-The veto LLM requires OPENROUTER_API_KEY or ANTHROPIC_API_KEY (reads from env or .env).
-If no key is available, WATCH/STRONG candidates will fail the veto step — set the key first.
-""")
+""" + (f"""
+--model given: the veto runs inside classify_all.py on {model_override} (one retry).
+""" if model_override else f"""
+No --model: the veto runs IN-CONTEXT on the LLM running this pipeline. classify_all.py marks
+STRONG entries veto_pending; then:
+  a. python3 step_3_classification/anomaly_veto.py plan --run-dir {run_dir}
+  b. Spawn one subagent per listed pair (at most 2 tickers each). Each subagent, per ticker:
+       python3 step_3_classification/anomaly_veto.py prompt --run-dir {run_dir} --ticker <TICKER>
+     performs at least 2 web searches, and writes only the JSON reply (plus
+     _model_provenance with method="agent") to the printed path.
+  c. python3 step_3_classification/anomaly_veto.py apply --run-dir {run_dir}
+Do not call an external model for the veto and do not write veto replies yourself
+for a ticker you did not research.
+"""))
     elif model_override:
         print(f"""
 ⚠️  API KEY REQUIRED: This run uses --model {model_override}.

@@ -361,12 +361,18 @@ if args.mode == "auto":
 
 # ── Init classifier (API mode only) ─────────────────────────────────────────
 clf = Classifier()
+# Anomaly STRONG vetoes run in-context on the pipeline's own model unless --model was given.
+# (CLASSIFIER_MODEL from env/hermes config does NOT switch the veto to an external model.)
+clf.anomaly_veto = "api" if args.model else "defer"
 
 # ── Banner ────────────────────────────────────────────────────────────────────
 print(SEP, flush=True)
 print("PHASE 2 — CLASSIFICATION", flush=True)
 print(SEP, flush=True)
 print(f"  Model    : {clf.model}", flush=True)
+if any("anomaly" in c.get("candidate_type", "") for c in all_candidates):
+    print(f"  Anomaly veto: {'API via --model ' + clf.model if clf.anomaly_veto == 'api' else 'in-context subagents (STRONG only)'}",
+          flush=True)
 print(f"  Batches  : {len(batch_files)} research file(s) — {len(research_index)} tickers indexed", flush=True)
 print(f"  Candidates: {len(all_candidates)} total | {len(done)} already done | {len(remaining)} remaining", flush=True)
 print(f"  Output   : {CLASSIFIED_FILE}", flush=True)
@@ -553,4 +559,9 @@ try:
 except Exception as e:
     print(f"[classify_all] WARNING: could not write run log: {e}", file=sys.stderr)
 
-print("\nNext  : python3 step_4_verify/verify_classifications.py")
+pending_vetoes = [r["candidate"]["ticker"] for r in results if r["classification"].get("veto_pending")]
+if pending_vetoes:
+    print(f"\n{len(pending_vetoes)} STRONG anomaly candidate(s) need an in-context veto. Next:")
+    print(f"  python3 step_3_classification/anomaly_veto.py plan --run-dir {run_dir}")
+else:
+    print("\nNext  : python3 step_4_verify/verify_classifications.py")

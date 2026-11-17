@@ -210,8 +210,76 @@ class VetoTests(unittest.TestCase):
     def classify(self, replies):
         from step_3_classification.classifier import Classifier
         client = Classifier(model="fixture", api_key="x")
+        client.anomaly_veto = "api"  # the --model route
         with patch.object(client, "_call_api", side_effect=replies):
             return client.classify(self.strong_candidate())
+
+    def test_default_route_defers_veto_without_api_call(self):
+        from step_3_classification.classifier import Classifier
+        client = Classifier(model="fixture", api_key="x")
+        with patch.object(client, "_call_api", side_effect=AssertionError("no external model")):
+            result = client.classify(self.strong_candidate())
+        self.assertEqual(result["classification"], "STRONG")
+        self.assertTrue(result["veto_pending"])
+        self.assertFalse(result["_valid"])
+
+    def test_watch_gets_no_veto(self):
+        from step_3_classification.classifier import Classifier
+        client = Classifier(model="fixture", api_key="x")
+        client.anomaly_veto = "api"
+        cand = self.strong_candidate()
+        with patch("step_3_classification.anomaly_scorer.score_anomaly",
+                   return_value={"signal_score": 50, "tier": "WATCH", "score_breakdown": {}}), \
+                patch.object(client, "_call_api", side_effect=AssertionError("WATCH must not be vetoed")):
+            result = client.classify(cand)
+        self.assertEqual(result["classification"], "WATCH")
+        self.assertFalse(result["veto_pending"])
+
+    def run_apply(self, replies):
+        """Write a run with one pending STRONG, the given reply files, then run `apply`."""
+        import subprocess
+        import sys
+        from step_3_classification.classifier import Classifier
+        client = Classifier(model="fixture", api_key="x")
+        cand = self.strong_candidate()
+        row = {"candidate": cand, "classification": client.classify(cand)}
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp) / "run"
+            (run / "anomaly_veto").mkdir(parents=True)
+            (run / "classified.json").write_text(json.dumps([row]))
+            for ticker, body in replies.items():
+                (run / "anomaly_veto" / f"{ticker}.json").write_text(body)
+            out = subprocess.run([sys.executable, "step_3_classification/anomaly_veto.py", "apply",
+                                  "--run-dir", str(run)], capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            return json.loads((run / "classified.json").read_text())[0]["classification"]
+
+    PROV = {"method": "agent", "model": "fixture-model", "harness": "test"}
+
+    def test_apply_clear_reply_makes_strong_actionable(self):
+        cl = self.run_apply({"KXRT-VIO-75": json.dumps({"vetoed": False, "veto_reason": "", "veto_confidence": 0,
+                                                        "supporting_info": "Reviews out", "_model_provenance": self.PROV})})
+        self.assertTrue(cl["_valid"])
+        self.assertEqual(cl["classification"], "STRONG")
+        self.assertEqual(cl["_veto_provenance"]["model"], "fixture-model")
+
+    def test_apply_veto_caps_at_watch(self):
+        cl = self.run_apply({"KXRT-VIO-75": json.dumps({"vetoed": True, "veto_reason": "Event concluded",
+                                                        "veto_confidence": 85, "supporting_info": "",
+                                                        "_model_provenance": self.PROV})})
+        self.assertEqual(cl["classification"], "WATCH")
+        self.assertFalse(cl["_valid"])
+
+    def test_apply_missing_or_invalid_reply_is_unavailable(self):
+        for replies in ({}, {"KXRT-VIO-75": "{not json"},
+                        {"KXRT-VIO-75": json.dumps({"vetoed": True, "veto_reason": "x", "veto_confidence": 20,
+                                                    "_model_provenance": self.PROV})},
+                        {"KXRT-VIO-75": json.dumps({"vetoed": False, "veto_reason": "", "veto_confidence": 0})}):
+            with self.subTest(replies=list(replies.values())[:1]):
+                cl = self.run_apply(replies)
+                self.assertTrue(cl["veto_unavailable"])
+                self.assertFalse(cl["_valid"])
+                self.assertEqual(cl["classification"], "STRONG")
 
     def test_veto_failure_twice_is_not_valid(self):
         result = self.classify(['{"vetoed": true, "veto_reason": "cut of', '{"vetoed": tr'])
