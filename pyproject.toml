@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "kalshi-tracker"
-version = "1.0.0"
+version = "1.1.0"
 description = "Multi-agent pipeline for finding high-certainty bets on Kalshi and Polymarket prediction markets"
 readme = "README.md"
 license = {file = "LICENSE"}

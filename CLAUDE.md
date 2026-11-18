@@ -14,6 +14,20 @@ The right form: "The design calls for X. That will take Y steps/time. Do you wan
 
 ---
 
+## Versioning and changelog
+
+Every commit that changes behaviour (a feature, a bug fix, a change to thresholds, scoring, or outputs) must also:
+
+1. Add an entry to `CHANGELOG.md` under `## [Unreleased]` at the top (create that heading if it is missing). Use the file's existing style: what was wrong or missing, an example where there is one, what changed, and the commit hash (add the hash in a follow-up edit, or reference the PR, if it isn't known yet).
+2. When the user asks for a release, or a set of changes is merged to main, move the Unreleased entries under a new version heading with today's date, and bump `version` in `pyproject.toml` to match:
+   - **MAJOR**: breaks existing outputs or runs (renamed report columns, changed cache/log formats, a score whose meaning changes so old runs can't be compared).
+   - **MINOR**: a new capability, or a change in which markets get flagged.
+   - **PATCH**: a bug fix that doesn't change the design.
+
+If unsure which level applies, ask. Docs-only, test-only and refactor-only commits don't need an entry.
+
+---
+
 ## Pipeline architecture
 
 See `pythia-main:_instruct_agent()` for the canonical step-by-step.  
