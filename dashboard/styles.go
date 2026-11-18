@@ -61,6 +61,9 @@ func styledDetailLines(body string, width int, raw bool) []string {
 		"ANOMALY EVIDENCE": warningStyle, "SIGNAL SCORE": accent, "SCORE BREAKDOWN": accent,
 		"VETO REASON": dangerStyle, "COMPLETE CLASSIFIED / FINALIZED RECORD": accent,
 		"ARCHIVED RESEARCH": accent, "TIER INVERSIONS": accent,
+		"WHY THIS TIER": accent, "SIGNAL WARNINGS": warningStyle, "VETO": accent,
+		"WHY NOT ACTIONABLE": warningStyle, "WHY NO EDGE": accent,
+		"VETO NOTES (AGAINST)": dangerStyle, "VETO NOTES (FOR)": green,
 	}
 	current := ""
 	for index, line := range strings.Split(clean(body), "\n") {
@@ -98,6 +101,19 @@ func styledDetailLines(body string, width int, raw bool) []string {
 					}
 					if line == "false" {
 						style = dangerStyle
+					}
+				}
+				if current == "WHY NOT ACTIONABLE" {
+					style = warningStyle
+				}
+				if current == "VETO" {
+					switch t := strings.TrimSpace(line); {
+					case strings.HasPrefix(t, "VETOED"), strings.HasPrefix(t, "Against"), strings.HasPrefix(t, "Reason:"):
+						style = dangerStyle
+					case strings.HasPrefix(t, "Cleared"), strings.HasPrefix(t, "For:"):
+						style = green
+					case strings.HasPrefix(t, "Unavailable"), strings.HasPrefix(t, "Pending"):
+						style = warningStyle
 					}
 				}
 				if strings.HasPrefix(strings.TrimSpace(line), "Contradicting:") {

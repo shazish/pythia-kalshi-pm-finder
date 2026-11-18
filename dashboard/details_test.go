@@ -130,3 +130,47 @@ func TestLoadArchivedResearch(t *testing.T) {
 		t.Fatal("reject unknown schemas")
 	}
 }
+
+func TestAnomalyDecisionHidesResearchFields(t *testing.T) {
+	r := row{
+		Candidate: object{"ticker": "KXRT-HUN-75", "title": "Film score", "candidate_type": "anomaly", "no_ask": float64(76), "rules_primary": "Resolves on the Tomatometer."},
+		Classification: object{"classification": "STRONG", "tier": "STRONG", "high_confidence_side": "NO", "signal_score": float64(72),
+			"score_model": "flow", "anomaly_type": "favourite_accumulation", "_watch_threshold": float64(40),
+			"score_breakdown": map[string]any{"flow_imbalance": float64(22), "volume_spike": float64(10), "concentration_penalty": float64(0)},
+			"score_flags":     []any{}, "vetoed": false, "veto_reason": "", "supporting_info": "Reviews published at 70%",
+			"_veto_provenance": map[string]any{"method": "agent", "model": "claude-opus-5-5"},
+			"reasons":          []any{}, "confirming_signals": []any{}, "what_would_change_this": "", "_valid": true, "_validation_errors": []any{}},
+	}
+	m := model{width: 100, height: 30}
+	s := m.decisionBody(r)
+	for _, want := range []string{"WHY THIS TIER", "Flow imbalance (how one-sided the taker money is): 22 / 30", "Score 72.0 / 100 → STRONG",
+		"SIGNAL WARNINGS\nNone.", "Cleared — no innocent explanation found", "Checked by: claude-opus-5-5", "For: Reviews published at 70%",
+		"Resolves on the Tomatometer."} {
+		if !strings.Contains(s, want) {
+			t.Errorf("decision tab missing %q", want)
+		}
+	}
+	for _, gone := range []string{"WHY THIS DECISION", "SUPPORTING EVIDENCE", "CONTRADICTING EVIDENCE", "VALIDATION ERRORS", "VERIFICATION",
+		"RECENT DEVELOPMENTS", "SETTLEMENT RISK", "WHAT WOULD CHANGE THIS", "WHY NOT ACTIONABLE", "ADDITIONAL RULES"} {
+		if strings.Contains(s, gone) {
+			t.Errorf("decision tab should not show %q for anomalies", gone)
+		}
+	}
+	m.detailTab = 1
+	if s := m.decisionBody(r); !strings.Contains(s, "come from trade data") || strings.Contains(s, "RESEARCH SUMMARY") {
+		t.Error("sources tab should explain anomalies have no cited research")
+	}
+	m.detailTab = 2
+	if s := m.decisionBody(r); strings.Contains(s, "SETTLEMENT RISK") || strings.Contains(s, "CONTRADICTING SIGNALS") {
+		t.Error("anomalies tab should drop research-only fields")
+	}
+	// WATCH rows never reach the veto; say so instead of "Cleared".
+	r.Classification["tier"], r.Classification["classification"] = "WATCH", "WATCH"
+	delete(r.Classification, "_veto_provenance")
+	r.Classification["_validation_errors"] = []any{"Tier WATCH — below STRONG threshold"}
+	m.detailTab = 0
+	s = m.decisionBody(r)
+	if !strings.Contains(s, "Not run — only STRONG") || !strings.Contains(s, "WHY NOT ACTIONABLE\n• Tier WATCH") {
+		t.Errorf("WATCH veto/actionable text wrong:\n%s", s)
+	}
+}

@@ -12,6 +12,21 @@ Each entry says what was wrong, gives an example where there is one, and says wh
 
 ---
 
+## [Unreleased]
+
+### Dashboard
+
+- **The anomaly details page was mostly empty.** It showed the research pipeline's sections, e.g. Why This Decision, Supporting Evidence, Settlement Risk and What Would Change This. Anomaly records never fill these, so each one said "Not recorded." *Now:* anomaly rows have their own Decision tab:
+  - **Why This Tier:** each score component against its maximum, e.g. "Flow imbalance: 22 / 30".
+  - **Signal Warnings.**
+  - **Veto:** cleared, vetoed, pending, unavailable or not run, with the checking model and the evidence for and against.
+  - **Why Not Actionable:** shown only when there is a reason.
+  - **Settlement rules.**
+
+  The Sources tab now says anomalies come from trade data, not cited research, and the Anomalies tab no longer lists the research-only fields.
+
+---
+
 ## [1.1.0] — 2026-11-17
 
 The anomaly pipeline was rebuilt around taker flow, after audits showed it couldn't tell which side money was going to and that none of its signals could ever reach the report. The evidence check for CERTAIN entries was also loosened, because it was rejecting everything. Write-up: `docs/anomaly.md`.
