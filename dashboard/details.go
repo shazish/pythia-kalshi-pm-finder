@@ -348,8 +348,13 @@ func (m model) decisionBody(r row) string {
 		if len(asObject(r.Candidate["volume_anomaly"])) == 0 && len(asObject(r.Candidate["anomaly_evidence"])) == 0 {
 			body += "No anomaly evidence recorded. This does not establish that none exists.\n\n"
 		}
-		body += section("Volume anomaly", r.Candidate["volume_anomaly"])
-		body += section("Anomaly evidence", r.Candidate["anomaly_evidence"])
+		if r.isAnomaly() {
+			// volume_anomaly is never set on anomaly candidates; skip its "Not recorded." line.
+			body += section("Anomaly evidence", anomalyEvidence(r.Candidate["anomaly_evidence"], r.platform()))
+		} else {
+			body += section("Volume anomaly", r.Candidate["volume_anomaly"])
+			body += section("Anomaly evidence", r.Candidate["anomaly_evidence"])
+		}
 		body += section("Signal score", r.Classification["signal_score"])
 		body += section("Score breakdown", r.Classification["score_breakdown"])
 		body += section("Signal warnings", r.Classification["score_flags"])
