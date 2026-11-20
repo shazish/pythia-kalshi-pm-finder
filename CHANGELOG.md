@@ -14,6 +14,10 @@ Each entry says what was wrong, gives an example where there is one, and says wh
 
 ## [Unreleased]
 
+---
+
+## [1.1.1] — 2026-11-20
+
 ### Dashboard
 
 - **The anomaly details page was mostly empty.** It showed the research pipeline's sections, e.g. Why This Decision, Supporting Evidence, Settlement Risk and What Would Change This. Anomaly records never fill these, so each one said "Not recorded." *Now:* anomaly rows have their own Decision tab:
@@ -23,9 +27,9 @@ Each entry says what was wrong, gives an example where there is one, and says wh
   - **Why Not Actionable:** shown only when there is a reason.
   - **Settlement rules.**
 
-  The Sources tab now says anomalies come from trade data, not cited research, and the Anomalies tab no longer lists the research-only fields.
+  The Sources tab now says anomalies come from trade data, not cited research, and the Anomalies tab no longer lists the research-only fields. (24ef686)
 
-- **The anomaly evidence was a dump of raw field names.** The Anomalies tab printed lines like "taker no dollars: 5097.73", "implied hc dollars: 97155", "oi vol ratio: 0.576" and "• block: false", which only make sense if you know the scanner's code. *Now:* the evidence is grouped and written in plain language: what kind of signal it is, who bought what in the last 24 hours (with a note on what a "taker" is), the large trades on one line each, trading volume against a normal day, the price move, changes since the previous scan, the lifetime money estimate (with a note that it shows size, not direction), and related markets. Numbers are formatted, e.g. "Bought NO: 15,554 contracts for $5,098" and "Share going to NO: 96% of the money". Polymarket anomalies, which carry an older set of fields, are shown with dollar volumes and their own 7-day, 30-day and event volumes. They are labelled as the favourite rather than "the side the money backs", since no trade-by-trade data is recorded for them. Any field the dashboard doesn't describe is still listed under "Other recorded fields", so nothing is hidden. The empty "Volume anomaly: Not recorded." line is gone for anomaly rows.
+- **The anomaly evidence was a dump of raw field names.** The Anomalies tab printed lines like "taker no dollars: 5097.73", "implied hc dollars: 97155", "oi vol ratio: 0.576" and "• block: false", which only make sense if you know the scanner's code. *Now:* the evidence is grouped and written in plain language: what kind of signal it is, who bought what in the last 24 hours (with a note on what a "taker" is), the large trades on one line each, trading volume against a normal day, the price move, changes since the previous scan, the lifetime money estimate (with a note that it shows size, not direction), and related markets. Numbers are formatted, e.g. "Bought NO: 15,554 contracts for $5,098" and "Share going to NO: 96% of the money". Polymarket anomalies, which carry an older set of fields, are shown with dollar volumes and their own 7-day, 30-day and event volumes. They are labelled as the favourite rather than "the side the money backs", since no trade-by-trade data is recorded for them. Any field the dashboard doesn't describe is still listed under "Other recorded fields", so nothing is hidden. The empty "Volume anomaly: Not recorded." line is gone for anomaly rows. (f8c8589)
 
 ---
 
